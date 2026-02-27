@@ -8,26 +8,26 @@
 #include "core/NtUtils.hpp"
 #include "core/ProcessUtils.hpp"
 
-static std::vector<DWORD> GetMatchingThreads(
+static std::vector<ThreadAddrInfo> GetMatchingThreads(
 	const std::vector<ThreadAddrInfo> &addrInfoList, const std::string &pattern
 ) {
-	std::vector<DWORD> matchedTids;
+	std::vector<ThreadAddrInfo> matchedThreads;
 
 	std::regex re;
 	try {
 		re = std::regex(pattern, std::regex_constants::icase);
 	} catch (const std::regex_error &) {
 		std::cerr << std::format("Invalid regex pattern: {}\n", pattern);
-		return matchedTids;
+		return matchedThreads;
 	}
 
 	for (const auto &t : addrInfoList) {
 		if (std::regex_search(t.StartAddress, re)) {
-			matchedTids.push_back(t.Tid);
+			matchedThreads.push_back(t);
 		}
 	}
 
-	return matchedTids;
+	return matchedThreads;
 }
 
 int CommandHandlers::HandleList(Formatter &formatter) {
@@ -169,41 +169,54 @@ int CommandHandlers::HandleSuspendThread(
 			);
 			return 1;
 		}
-		auto matchedTids = GetMatchingThreads(addrInfoResult.value(), thread);
-		if (matchedTids.empty()) {
+		auto matchedThreads = GetMatchingThreads(addrInfoResult.value(), thread);
+		if (matchedThreads.empty()) {
 			formatter.PrintError(std::format("No threads matched pattern: '{}'", thread));
 			return 1;
 		}
 
-		for (DWORD matchedTid : matchedTids) {
-			auto res = ProcessUtils::SuspendThread(matchedTid);
+		std::vector<ThreadAddrInfo> successfulThreads;
+		std::vector<std::pair<ThreadAddrInfo, std::string>> failedThreads;
+
+		for (const auto &matchedInfo : matchedThreads) {
+			auto res = ProcessUtils::SuspendThread(matchedInfo.Tid);
 			if (!res.has_value()) {
-				formatter.PrintError(
-					std::format(
-						"Failed to suspend thread {}: {}", matchedTid, res.error().message
-					),
-					res.error().traceback
-				);
+				failedThreads.push_back({matchedInfo, res.error().message});
 				anyError = true;
 			} else {
-				formatter.PrintCommandResult(
-					{{proc, ""}},
-					std::format("thread {} suspended (matched '{}')", matchedTid, thread)
-				);
+				successfulThreads.push_back(matchedInfo);
 			}
 		}
+
+		formatter.PrintThreadAction(
+			proc.Pid, proc.Name, "Suspended", successfulThreads, failedThreads
+		);
 	} else {
-		auto res = ProcessUtils::SuspendThread(tid);
-		if (!res.has_value()) {
-			formatter.PrintError(
-				std::format("Failed to suspend thread {}: {}", tid, res.error().message),
-				res.error().traceback
-			);
-			return 1;
+		ProcessUtils::EnableDebugPrivilege();
+		auto addrInfoResult = ProcessUtils::GetThreadStartAddresses(proc.Pid);
+		std::string startAddress = "Unknown";
+		if (addrInfoResult.has_value()) {
+			for (const auto &a : addrInfoResult.value()) {
+				if (a.Tid == tid) {
+					startAddress = a.StartAddress;
+					break;
+				}
+			}
 		}
 
-		formatter.PrintCommandResult(
-			{{proc, ""}}, std::format("thread {} suspended", tid)
+		std::vector<ThreadAddrInfo> successfulThreads;
+		std::vector<std::pair<ThreadAddrInfo, std::string>> failedThreads;
+		ThreadAddrInfo tInfo = {tid, startAddress};
+
+		auto res = ProcessUtils::SuspendThread(tid);
+		if (!res.has_value()) {
+			failedThreads.push_back({tInfo, res.error().message});
+		} else {
+			successfulThreads.push_back(tInfo);
+		}
+
+		formatter.PrintThreadAction(
+			proc.Pid, proc.Name, "Suspended", successfulThreads, failedThreads
 		);
 	}
 
@@ -252,48 +265,55 @@ int CommandHandlers::HandleResumeThread(
 			);
 			return 1;
 		}
-		auto matchedTids = GetMatchingThreads(addrInfoResult.value(), thread);
-		if (matchedTids.empty()) {
+		auto matchedThreads = GetMatchingThreads(addrInfoResult.value(), thread);
+		if (matchedThreads.empty()) {
 			formatter.PrintError(std::format("No threads matched pattern: '{}'", thread));
 			return 1;
 		}
 
-		for (DWORD matchedTid : matchedTids) {
-			auto res = ProcessUtils::ResumeThread(matchedTid);
+		std::vector<ThreadAddrInfo> successfulThreads;
+		std::vector<std::pair<ThreadAddrInfo, std::string>> failedThreads;
+
+		for (const auto &matchedInfo : matchedThreads) {
+			auto res = ProcessUtils::ResumeThread(matchedInfo.Tid);
 			if (!res.has_value()) {
-				formatter.PrintError(
-					std::format(
-						"Failed to resume thread {}"
-						"\nReason: {}",
-						matchedTid,
-						res.error().message
-					),
-					res.error().traceback
-				);
+				failedThreads.push_back({matchedInfo, res.error().message});
 				anyError = true;
 			} else {
-				formatter.PrintCommandResult(
-					{{proc, ""}},
-					std::format("thread {} resumed (matched '{}')", matchedTid, thread)
-				);
+				successfulThreads.push_back(matchedInfo);
 			}
 		}
+
+		formatter.PrintThreadAction(
+			proc.Pid, proc.Name, "Resumed", successfulThreads, failedThreads
+		);
 	} else {
-		auto res = ProcessUtils::ResumeThread(tid);
-		if (!res.has_value()) {
-			formatter.PrintError(
-				std::format(
-					"Failed to resume thread {}"
-					"\nReason: {}",
-					tid,
-					res.error().message
-				),
-				res.error().traceback
-			);
-			return 1;
+		ProcessUtils::EnableDebugPrivilege();
+		auto addrInfoResult = ProcessUtils::GetThreadStartAddresses(proc.Pid);
+		std::string startAddress = "Unknown";
+		if (addrInfoResult.has_value()) {
+			for (const auto &a : addrInfoResult.value()) {
+				if (a.Tid == tid) {
+					startAddress = a.StartAddress;
+					break;
+				}
+			}
 		}
 
-		formatter.PrintCommandResult({{proc, ""}}, std::format("thread {} resumed", tid));
+		std::vector<ThreadAddrInfo> successfulThreads;
+		std::vector<std::pair<ThreadAddrInfo, std::string>> failedThreads;
+		ThreadAddrInfo tInfo = {tid, startAddress};
+
+		auto res = ProcessUtils::ResumeThread(tid);
+		if (!res.has_value()) {
+			failedThreads.push_back({tInfo, res.error().message});
+		} else {
+			successfulThreads.push_back(tInfo);
+		}
+
+		formatter.PrintThreadAction(
+			proc.Pid, proc.Name, "Resumed", successfulThreads, failedThreads
+		);
 	}
 
 	return anyError ? 1 : 0;
@@ -345,7 +365,7 @@ int CommandHandlers::HandleQueryThread(
 	bool anyError = false;
 
 	for (const auto &proc : pidsResult.value()) {
-		std::vector<DWORD> matchedTids;
+		std::vector<ThreadAddrInfo> matchedThreads;
 		auto addrInfoResult = ProcessUtils::GetThreadStartAddresses(proc.Pid);
 		if (!addrInfoResult.has_value()) {
 			formatter.PrintError(
@@ -362,21 +382,26 @@ int CommandHandlers::HandleQueryThread(
 		}
 		auto addrInfoList = addrInfoResult.value();
 		if (isRegex) {
-			matchedTids = GetMatchingThreads(addrInfoList, thread);
+			matchedThreads = GetMatchingThreads(addrInfoList, thread);
 		} else {
 			// Just verifying if the requested TID actually belongs to this process
 			auto threadsResult = NtUtils::GetProcessThreads(proc.Pid);
 			if (threadsResult.has_value()) {
 				for (const auto &t : threadsResult.value()) {
 					if (t.Tid == tid) {
-						matchedTids.push_back(tid);
+						for (const auto &a : addrInfoList) {
+							if (a.Tid == tid) {
+								matchedThreads.push_back(a);
+								break;
+							}
+						}
 						break;
 					}
 				}
 			}
 		}
 
-		if (matchedTids.empty()) {
+		if (matchedThreads.empty()) {
 			if (isRegex) {
 				formatter.PrintError(
 					std::format(
@@ -392,17 +417,7 @@ int CommandHandlers::HandleQueryThread(
 			continue;
 		}
 
-		std::vector<ThreadAddrInfo> filteredList;
-		for (const auto &t : addrInfoList) {
-			if (std::find(matchedTids.begin(), matchedTids.end(), t.Tid) !=
-				matchedTids.end()) {
-				filteredList.push_back(t);
-			}
-		}
-
-		if (!filteredList.empty()) {
-			formatter.PrintThreads(proc.Pid, proc.Name, filteredList);
-		}
+		formatter.PrintThreads(proc.Pid, proc.Name, matchedThreads);
 	}
 
 	return anyError ? 1 : 0;

@@ -16,6 +16,13 @@ public:
 		const std::vector<std::pair<ProcessInfo, std::string>> &results,
 		const std::string &actionVerb
 	);
+	void PrintThreadAction(
+		DWORD pid,
+		const std::wstring &processName,
+		const std::string &actionVerb, // "Suspended" or "Resumed"
+		const std::vector<ThreadAddrInfo> &successfulThreads,
+		const std::vector<std::pair<ThreadAddrInfo, std::string>> &failedThreads
+	);
 	void PrintThreads(
 		DWORD pid,
 		const std::wstring &processName,

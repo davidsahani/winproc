@@ -1,6 +1,8 @@
 #include "StringUtils.hpp"
 
 #include <windows.h>
+#include <algorithm>
+#include <cctype>
 
 namespace StringUtils {
 
@@ -34,6 +36,13 @@ namespace StringUtils {
 		}
 
 		return result;
+	}
+
+	std::string ToLower(std::string str) {
+		std::transform(str.begin(), str.end(), str.begin(), [](unsigned char c) {
+			return std::tolower(c);
+		});
+		return str;
 	}
 
 } // namespace StringUtils

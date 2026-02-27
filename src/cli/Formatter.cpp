@@ -226,6 +226,108 @@ void Formatter::PrintCommandResult(
 	}
 }
 
+void Formatter::PrintThreadAction(
+	DWORD pid,
+	const std::wstring &processName,
+	const std::string &actionVerb, // "Suspended" or "Resumed"
+	const std::vector<ThreadAddrInfo> &successfulThreads,
+	const std::vector<std::pair<ThreadAddrInfo, std::string>> &failedThreads
+) {
+	if (m_useJson) {
+		nlohmann::json jOutputs = nlohmann::json::array();
+
+		for (const auto &t : successfulThreads) {
+			nlohmann::json item;
+			item["success"] = true;
+			item["pid"] = pid;
+			item["name"] = StringUtils::WstrToString(processName);
+			item["tid"] = t.Tid;
+			item["start_address"] = t.StartAddress;
+			item["action"] = actionVerb;
+			jOutputs.push_back(item);
+		}
+
+		for (const auto &[t, err] : failedThreads) {
+			nlohmann::json item;
+			item["success"] = false;
+			item["pid"] = pid;
+			item["name"] = StringUtils::WstrToString(processName);
+			item["tid"] = t.Tid;
+			item["start_address"] = t.StartAddress;
+			item["action"] = actionVerb;
+			item["error"] = err;
+			jOutputs.push_back(item);
+		}
+
+		std::cout << jOutputs.dump(4) << "\n";
+	} else {
+		if (successfulThreads.empty() && failedThreads.empty()) {
+			return; // Nothing to print
+		}
+
+		size_t total = successfulThreads.size() + failedThreads.size();
+
+		if (total == 1) {
+			if (!successfulThreads.empty()) {
+				const auto &t = successfulThreads.front();
+				std::cout << std::format(
+					"{} thread {} of PID {} with StartAddress {}\n",
+					actionVerb,
+					t.Tid,
+					pid,
+					t.StartAddress
+				);
+			} else {
+				const auto &[t, err] = failedThreads.front();
+				std::cerr << std::format(
+					"ERROR: Failed to {} thread {} of PID {}: {}\n",
+					StringUtils::ToLower(actionVerb),
+					t.Tid,
+					pid,
+					err
+				);
+			}
+		} else {
+			if (!successfulThreads.empty()) {
+				std::cout << std::format(
+					"[SUCCESS] {} {} threads in {} (PID: {}):\n",
+					actionVerb,
+					successfulThreads.size(),
+					StringUtils::WstrToString(processName),
+					pid
+				);
+
+				for (const auto &t : successfulThreads) {
+					std::cout << std::format(
+						"  TID: {:<4} | StartAddress: {}\n", t.Tid, t.StartAddress
+					);
+				}
+				std::cout << "\n";
+			}
+
+			if (!failedThreads.empty()) {
+				std::cerr << std::format(
+					"[FAILED] Could not {} {} threads in {} (PID: {}):\n",
+					StringUtils::ToLower(actionVerb),
+					failedThreads.size(),
+					StringUtils::WstrToString(processName),
+					pid
+				);
+
+				for (const auto &[t, err] : failedThreads) {
+					std::cerr << std::format(
+						"  TID: {:<4} | StartAddress: {:<40} | Error: {}\n",
+						t.Tid,
+						t.StartAddress,
+						err
+					);
+				}
+				std::cerr << "\n";
+			}
+		}
+	}
+}
+
 void Formatter::PrintThreads(
 	DWORD pid, const std::wstring &processName, const std::vector<ThreadAddrInfo> &threads
 ) {
