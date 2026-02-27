@@ -1,0 +1,58 @@
+# https://clang.llvm.org/docs/ClangFormatStyleOptions.html
+# https://zed0.co.uk/clang-format-configurator/
+
+BasedOnStyle: Microsoft
+Standard: Latest
+IndentWidth: 4
+TabWidth: 4
+ColumnLimit: 90
+SortIncludes: Never
+SortUsingDeclarations: false
+UseTab: ForContinuationAndIndentation
+
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: false
+  AfterStruct: false
+  AfterUnion: false
+  AfterNamespace: false
+  AfterFunction: false
+  AfterEnum: true
+  BeforeCatch: false
+  BeforeElse: false
+  AfterControlStatement: Never
+  AfterExternBlock: true
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: true
+
+AccessModifierOffset: -4
+FixNamespaceComments: true
+IndentCaseLabels: true
+NamespaceIndentation: All
+Cpp11BracedListStyle: true
+AlignAfterOpenBracket: BlockIndent
+AllowShortLambdasOnASingleLine: None
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+BinPackArguments: false
+BinPackParameters: false
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+
+PenaltyBreakAssignment: 10
+PenaltyBreakBeforeFirstCallParameter: 30
+PenaltyBreakComment: 10
+PenaltyBreakFirstLessLess: 0
+PenaltyBreakString: 10
+PenaltyExcessCharacter: 100
+PenaltyReturnTypeOnItsOwnLine: 60
+
+ReflowComments: false
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+AlignEscapedNewlines: Left
+SkipMacroDefinitionBody: true
+StatementMacros:
+  - "Q_OBJECT"
+# BreakConstructorInitializers: AfterColon
