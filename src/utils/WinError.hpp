@@ -14,6 +14,12 @@ namespace error::private_ {
 		error.message += std::format("\nReason: {}", format_hresult(hr));
 		return error;
 	}
+
+	static inline Error add_ntstatus(NTSTATUS status, Error error) {
+		error.message += std::format("\nReason: {}", format_ntstatus(status));
+		return error;
+	}
 }; // namespace error::private_
 
-#define WinErr(hr, ...) error::private_::add_error(hr, Error(__VA_ARGS__))
+#define WinErr(code, ...) error::private_::add_error(code, Error(__VA_ARGS__))
+#define NtStatusErr(status, ...) error::private_::add_ntstatus(status, Error(__VA_ARGS__))

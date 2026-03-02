@@ -6,22 +6,26 @@
 #include "core/NtUtils.hpp"
 #include "core/ProcessUtils.hpp"
 
+enum class Action
+{
+	Terminate,
+	Suspend,
+	Resume,
+};
+
 class Formatter {
 public:
 	explicit Formatter(bool useJson);
 
 	void PrintProcessList(const std::vector<ProcessInfo> &processes);
 	void PrintProcessDetails(const std::vector<ProcessInfo> &processes);
-	void PrintCommandResult(
-		const std::vector<std::pair<ProcessInfo, std::string>> &results,
-		const std::string &actionVerb
-	);
+	void
+	PrintCommandResult(const std::pair<ProcessInfo, ResultVoid> &result, Action action);
 	void PrintThreadAction(
 		DWORD pid,
 		const std::wstring &processName,
-		const std::string &actionVerb, // "Suspended" or "Resumed"
-		const std::vector<ThreadAddrInfo> &successfulThreads,
-		const std::vector<std::pair<ThreadAddrInfo, std::string>> &failedThreads
+		Action action,
+		const std::vector<std::pair<ThreadAddrInfo, ResultVoid>> &results
 	);
 	void PrintThreads(
 		DWORD pid,

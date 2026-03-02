@@ -347,7 +347,7 @@ Result<int, Error> ProcessUtils::GetThreadPriorityLevel(DWORD tid) {
 	return priority;
 }
 
-Result<bool, Error> ProcessUtils::SuspendThread(DWORD tid) {
+Result<std::monostate, Error> ProcessUtils::SuspendThread(DWORD tid) {
 	HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, tid);
 	if (!hThread) {
 		return WinErr(GetLastError(), std::format("OpenThread failed for TID {}", tid));
@@ -358,10 +358,10 @@ Result<bool, Error> ProcessUtils::SuspendThread(DWORD tid) {
 	if (prevCount == static_cast<DWORD>(-1)) {
 		return WinErr(err, std::format("SuspendThread failed for TID {}", tid));
 	}
-	return true;
+	return std::monostate{};
 }
 
-Result<bool, Error> ProcessUtils::ResumeThread(DWORD tid) {
+Result<std::monostate, Error> ProcessUtils::ResumeThread(DWORD tid) {
 	HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, tid);
 	if (!hThread) {
 		return WinErr(GetLastError(), std::format("OpenThread failed for TID {}", tid));
@@ -372,5 +372,5 @@ Result<bool, Error> ProcessUtils::ResumeThread(DWORD tid) {
 	if (prevCount == static_cast<DWORD>(-1)) {
 		return WinErr(err, std::format("ResumeThread failed for TID {}", tid));
 	}
-	return true;
+	return std::monostate{};
 }

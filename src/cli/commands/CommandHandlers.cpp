@@ -5,6 +5,8 @@
 #include <format>
 #include <regex>
 
+#include "WinError.hpp"
+#include "StringUtils.hpp"
 #include "core/NtUtils.hpp"
 #include "core/ProcessUtils.hpp"
 
@@ -34,7 +36,11 @@ int CommandHandlers::HandleList(Formatter &formatter) {
 	auto listResult = NtUtils::GetProcessList();
 	if (!listResult.has_value()) {
 		formatter.PrintError(
-			std::format("Error getting process list: {}", listResult.error().message),
+			std::format(
+				"Failed to retrieve process list"
+				"\nReason: {}",
+				listResult.error().message
+			),
 			listResult.error().traceback
 		);
 		return 1;
@@ -44,86 +50,121 @@ int CommandHandlers::HandleList(Formatter &formatter) {
 }
 
 int CommandHandlers::HandleKill(const std::string &target, Formatter &formatter) {
-	auto pidsResult = ProcessUtils::GetTargetProcesses(target);
-	if (!pidsResult.has_value()) {
+	auto procsResult = ProcessUtils::GetTargetProcesses(target);
+	if (!procsResult.has_value()) {
 		formatter.PrintError(
-			std::format("Error resolving target: {}", pidsResult.error().message),
-			pidsResult.error().traceback
+			std::format(
+				"Failed to resolve target: \"{}\""
+				"\nReason: {}",
+				target,
+				procsResult.error().message
+			),
+			procsResult.error().traceback
 		);
 		return 1;
 	}
 
 	bool anyError = false;
-	std::vector<std::pair<ProcessInfo, std::string>> results;
 
-	for (const auto &proc : pidsResult.value()) {
+	for (const auto &proc : procsResult.value()) {
 		HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, proc.Pid);
 		if (!hProcess) {
-			results.push_back({proc, std::to_string(GetLastError())});
+			Error err = WinErr(
+				GetLastError(),
+				std::format(
+					"Failed to open process \"{}\" with PID {}",
+					StringUtils::WstrToString(proc.Name),
+					proc.Pid
+				)
+			);
+			formatter.PrintCommandResult({proc, err}, Action::Terminate);
 			anyError = true;
 			continue;
 		}
 		if (!TerminateProcess(hProcess, 0)) {
-			results.push_back({proc, std::to_string(GetLastError())});
+			Error err = WinErr(
+				GetLastError(),
+				std::format(
+					"Failed to terminate process \"{}\" with PID {}",
+					StringUtils::WstrToString(proc.Name),
+					proc.Pid
+				)
+			);
+			formatter.PrintCommandResult({proc, err}, Action::Terminate);
 			anyError = true;
 		} else {
-			results.push_back({proc, ""});
+			formatter.PrintCommandResult({proc, std::monostate{}}, Action::Terminate);
 		}
 		CloseHandle(hProcess);
 	}
-	formatter.PrintCommandResult(results, "killed");
 	return anyError ? 1 : 0;
 }
 
 int CommandHandlers::HandleSuspend(const std::string &target, Formatter &formatter) {
-	auto pidsResult = ProcessUtils::GetTargetProcesses(target);
-	if (!pidsResult.has_value()) {
+	auto procsResult = ProcessUtils::GetTargetProcesses(target);
+	if (!procsResult.has_value()) {
 		formatter.PrintError(
-			std::format("Error resolving target: {}", pidsResult.error().message),
-			pidsResult.error().traceback
+			std::format(
+				"Failed to resolve target: \"{}\""
+				"\nReason: {}",
+				target,
+				procsResult.error().message
+			),
+			procsResult.error().traceback
 		);
 		return 1;
 	}
 
-	bool anyError = false;
-	std::vector<std::pair<ProcessInfo, std::string>> results;
+	std::vector<std::pair<ProcessInfo, ResultVoid>> results{};
 
-	for (const auto &proc : pidsResult.value()) {
-		auto res = NtUtils::SuspendProcess(proc.Pid);
-		if (!res.has_value()) {
-			results.push_back({proc, res.error().str()});
-			anyError = true;
-		} else {
-			results.push_back({proc, ""});
-		}
+	for (const auto &proc : procsResult.value()) {
+		results.push_back({
+			proc,
+			NtUtils::SuspendProcess(proc.Pid),
+		});
 	}
-	formatter.PrintCommandResult(results, "suspended");
+
+	bool anyError = false;
+	for (const auto &res : results) {
+		if (!res.second.has_value()) {
+			anyError = true;
+		}
+		formatter.PrintCommandResult(res, Action::Suspend);
+	}
 	return anyError ? 1 : 0;
 }
 
 int CommandHandlers::HandleResume(const std::string &target, Formatter &formatter) {
-	auto pidsResult = ProcessUtils::GetTargetProcesses(target);
-	if (!pidsResult.has_value()) {
+	auto procsResult = ProcessUtils::GetTargetProcesses(target);
+	if (!procsResult.has_value()) {
 		formatter.PrintError(
-			std::format("Error resolving target: {}", pidsResult.error().message),
-			pidsResult.error().traceback
+			std::format(
+				"Failed to resolve target: \"{}\""
+				"\nReason: {}",
+				target,
+				procsResult.error().message
+			),
+			procsResult.error().traceback
 		);
 		return 1;
 	}
 
-	bool anyError = false;
-	std::vector<std::pair<ProcessInfo, std::string>> results;
+	std::vector<std::pair<ProcessInfo, ResultVoid>> results{};
 
-	for (const auto &proc : pidsResult.value()) {
-		auto res = NtUtils::ResumeProcess(proc.Pid);
-		if (!res.has_value()) {
-			results.push_back({proc, res.error().str()});
-			anyError = true;
-		} else {
-			results.push_back({proc, ""});
-		}
+	for (const auto &proc : procsResult.value()) {
+		results.push_back({
+			proc,
+			NtUtils::ResumeProcess(proc.Pid),
+		});
 	}
-	formatter.PrintCommandResult(results, "resumed");
+
+	bool anyError = false;
+	for (const auto &res : results) {
+		if (!res.second.has_value()) {
+			anyError = true;
+		}
+		formatter.PrintCommandResult(res, Action::Resume);
+	}
 	return anyError ? 1 : 0;
 }
 
@@ -133,7 +174,12 @@ int CommandHandlers::HandleSuspendThread(
 	auto pidsResult = ProcessUtils::GetTargetProcesses(target);
 	if (!pidsResult.has_value()) {
 		formatter.PrintError(
-			std::format("Error resolving target: {}", pidsResult.error().message),
+			std::format(
+				"Failed to resolve target: \"{}\""
+				"\nReason: {}",
+				target,
+				pidsResult.error().message
+			),
 			pidsResult.error().traceback
 		);
 		return 1;
@@ -153,6 +199,7 @@ int CommandHandlers::HandleSuspendThread(
 
 	const auto &proc = pidsResult.value().front();
 	bool anyError = false;
+	std::vector<std::pair<ThreadAddrInfo, ResultVoid>> results;
 
 	if (isRegex) {
 		ProcessUtils::EnableDebugPrivilege();
@@ -175,22 +222,13 @@ int CommandHandlers::HandleSuspendThread(
 			return 1;
 		}
 
-		std::vector<ThreadAddrInfo> successfulThreads;
-		std::vector<std::pair<ThreadAddrInfo, std::string>> failedThreads;
-
 		for (const auto &matchedInfo : matchedThreads) {
-			auto res = ProcessUtils::SuspendThread(matchedInfo.Tid);
-			if (!res.has_value()) {
-				failedThreads.push_back({matchedInfo, res.error().message});
+			auto result = ProcessUtils::SuspendThread(matchedInfo.Tid);
+			if (!result.has_value()) {
 				anyError = true;
-			} else {
-				successfulThreads.push_back(matchedInfo);
 			}
+			results.push_back({matchedInfo, result});
 		}
-
-		formatter.PrintThreadAction(
-			proc.Pid, proc.Name, "Suspended", successfulThreads, failedThreads
-		);
 	} else {
 		ProcessUtils::EnableDebugPrivilege();
 		auto addrInfoResult = ProcessUtils::GetThreadStartAddresses(proc.Pid);
@@ -204,22 +242,15 @@ int CommandHandlers::HandleSuspendThread(
 			}
 		}
 
-		std::vector<ThreadAddrInfo> successfulThreads;
-		std::vector<std::pair<ThreadAddrInfo, std::string>> failedThreads;
 		ThreadAddrInfo tInfo = {tid, startAddress};
-
-		auto res = ProcessUtils::SuspendThread(tid);
-		if (!res.has_value()) {
-			failedThreads.push_back({tInfo, res.error().message});
-		} else {
-			successfulThreads.push_back(tInfo);
+		auto result = ProcessUtils::SuspendThread(tid);
+		if (!result.has_value()) {
+			anyError = true;
 		}
-
-		formatter.PrintThreadAction(
-			proc.Pid, proc.Name, "Suspended", successfulThreads, failedThreads
-		);
+		results.push_back({tInfo, result});
 	}
 
+	formatter.PrintThreadAction(proc.Pid, proc.Name, Action::Suspend, results);
 	return anyError ? 1 : 0;
 }
 
@@ -229,7 +260,12 @@ int CommandHandlers::HandleResumeThread(
 	auto pidsResult = ProcessUtils::GetTargetProcesses(target);
 	if (!pidsResult.has_value()) {
 		formatter.PrintError(
-			std::format("Error resolving target: {}", pidsResult.error().message),
+			std::format(
+				"Failed to resolve target: \"{}\""
+				"\nReason: {}",
+				target,
+				pidsResult.error().message
+			),
 			pidsResult.error().traceback
 		);
 		return 1;
@@ -249,6 +285,7 @@ int CommandHandlers::HandleResumeThread(
 
 	const auto &proc = pidsResult.value().front();
 	bool anyError = false;
+	std::vector<std::pair<ThreadAddrInfo, ResultVoid>> results;
 
 	if (isRegex) {
 		ProcessUtils::EnableDebugPrivilege();
@@ -256,7 +293,7 @@ int CommandHandlers::HandleResumeThread(
 		if (!addrInfoResult.has_value()) {
 			formatter.PrintError(
 				std::format(
-					"Failed to get thread start addresses for PID {}"
+					"Failed to get thread start addresses for PID: {}"
 					"\nReason: {}",
 					proc.Pid,
 					addrInfoResult.error().message
@@ -271,22 +308,15 @@ int CommandHandlers::HandleResumeThread(
 			return 1;
 		}
 
-		std::vector<ThreadAddrInfo> successfulThreads;
-		std::vector<std::pair<ThreadAddrInfo, std::string>> failedThreads;
-
 		for (const auto &matchedInfo : matchedThreads) {
 			auto res = ProcessUtils::ResumeThread(matchedInfo.Tid);
 			if (!res.has_value()) {
-				failedThreads.push_back({matchedInfo, res.error().message});
+				results.push_back({matchedInfo, res.error()});
 				anyError = true;
 			} else {
-				successfulThreads.push_back(matchedInfo);
+				results.push_back({matchedInfo, std::monostate{}});
 			}
 		}
-
-		formatter.PrintThreadAction(
-			proc.Pid, proc.Name, "Resumed", successfulThreads, failedThreads
-		);
 	} else {
 		ProcessUtils::EnableDebugPrivilege();
 		auto addrInfoResult = ProcessUtils::GetThreadStartAddresses(proc.Pid);
@@ -300,22 +330,16 @@ int CommandHandlers::HandleResumeThread(
 			}
 		}
 
-		std::vector<ThreadAddrInfo> successfulThreads;
-		std::vector<std::pair<ThreadAddrInfo, std::string>> failedThreads;
 		ThreadAddrInfo tInfo = {tid, startAddress};
-
 		auto res = ProcessUtils::ResumeThread(tid);
 		if (!res.has_value()) {
-			failedThreads.push_back({tInfo, res.error().message});
+			results.push_back({tInfo, res.error()});
 		} else {
-			successfulThreads.push_back(tInfo);
+			results.push_back({tInfo, std::monostate{}});
 		}
-
-		formatter.PrintThreadAction(
-			proc.Pid, proc.Name, "Resumed", successfulThreads, failedThreads
-		);
 	}
 
+	formatter.PrintThreadAction(proc.Pid, proc.Name, Action::Resume, results);
 	return anyError ? 1 : 0;
 }
 
@@ -323,7 +347,12 @@ int CommandHandlers::HandleQuery(const std::string &target, Formatter &formatter
 	auto pidsResult = ProcessUtils::GetTargetProcesses(target);
 	if (!pidsResult.has_value()) {
 		formatter.PrintError(
-			std::format("Error resolving target: {}", pidsResult.error().message),
+			std::format(
+				"Failed to resolve target: \"{}\""
+				"\nReason: {}",
+				target,
+				pidsResult.error().message
+			),
 			pidsResult.error().traceback
 		);
 		return 1;
@@ -339,7 +368,7 @@ int CommandHandlers::HandleQueryThread(
 	if (!pidsResult.has_value()) {
 		formatter.PrintError(
 			std::format(
-				"Error resolving target: {}"
+				"Failed to resolve target: \"{}\""
 				"\nReason: {}",
 				target,
 				pidsResult.error().message
@@ -370,7 +399,7 @@ int CommandHandlers::HandleQueryThread(
 		if (!addrInfoResult.has_value()) {
 			formatter.PrintError(
 				std::format(
-					"Failed to get thread start addresses for PID {}"
+					"Failed to get thread start addresses for PID: {}"
 					"\nReason: {}",
 					proc.Pid,
 					addrInfoResult.error().message

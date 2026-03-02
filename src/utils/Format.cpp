@@ -6,10 +6,21 @@
 
 static inline std::string wide_to_utf8(std::wstring_view ws) {
 	if (ws.empty()) return {};
-	int bytes = ::WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()), nullptr, 0, nullptr, nullptr);
+	int bytes = ::WideCharToMultiByte(
+		CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()), nullptr, 0, nullptr, nullptr
+	);
 	if (bytes <= 0) return {};
 	std::string out(static_cast<size_t>(bytes), '\0');
-	::WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()), out.data(), bytes, nullptr, nullptr);
+	::WideCharToMultiByte(
+		CP_UTF8,
+		0,
+		ws.data(),
+		static_cast<int>(ws.size()),
+		out.data(),
+		bytes,
+		nullptr,
+		nullptr
+	);
 	return out;
 }
 
@@ -40,7 +51,9 @@ std::string format_hresult(HRESULT hr) {
 	_bstr_t desc = ce.Description();
 	if (desc.length() != 0) {
 		// _bstr_t is wide on Windows.
-		return wide_to_utf8(std::wstring_view(static_cast<const wchar_t *>(desc), desc.length()));
+		return wide_to_utf8(
+			std::wstring_view(static_cast<const wchar_t *>(desc), desc.length())
+		);
 	}
 
 	std::string msg = tchar_to_utf8(ce.ErrorMessage());
@@ -56,4 +69,30 @@ std::string format_win32(DWORD winError) {
 	// Let _com_error do the FormatMessage
 	// work via a Win32-mapped HRESULT.
 	return format_hresult(HRESULT_FROM_WIN32(winError));
+}
+
+std::string format_ntstatus(LONG status) {
+	HMODULE hNtDll = GetModuleHandleW(L"ntdll.dll");
+	if (!hNtDll) {
+		return std::format("NTSTATUS 0x{:08X}", static_cast<long>(status));
+	}
+
+	WCHAR buffer[512] = {0};
+	DWORD len = FormatMessageW(
+		FORMAT_MESSAGE_FROM_HMODULE | FORMAT_MESSAGE_IGNORE_INSERTS,
+		hNtDll,
+		static_cast<DWORD>(status),
+		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+		buffer,
+		sizeof(buffer) / sizeof(WCHAR),
+		nullptr
+	);
+
+	if (len == 0) {
+		return std::format("Unknown NTSTATUS: 0x{:08X}", static_cast<long>(status));
+	}
+
+	std::string msg = wide_to_utf8(std::wstring_view(buffer, len));
+	rtrim_inplace(msg);
+	return msg;
 }

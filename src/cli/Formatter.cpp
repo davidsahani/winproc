@@ -187,41 +187,40 @@ void Formatter::PrintProcessDetails(const std::vector<ProcessInfo> &processes) {
 }
 
 void Formatter::PrintCommandResult(
-	const std::vector<std::pair<ProcessInfo, std::string>> &results,
-	const std::string &actionVerb
+	const std::pair<ProcessInfo, ResultVoid> &result, Action action
 ) {
+	static const std::map<Action, std::pair<std::string, std::string>> actionMap = {
+		{Action::Terminate, {"terminated", "terminate"}},
+		{Action::Suspend, {"suspended", "suspend"}},
+		{Action::Resume, {"resumed", "resume"}},
+	};
+
+	const auto &[pastVerb, verb] = actionMap.at(action);
+	const auto &[proc, res] = result;
+	bool success = res.has_value();
+
 	if (m_useJson) {
-		nlohmann::json jOutputs = nlohmann::json::array();
-		for (const auto &[proc, errorMsg] : results) {
-			bool success = errorMsg.empty();
-			nlohmann::json item;
-			item["success"] = success;
-			item["pid"] = proc.Pid;
-			item["name"] = StringUtils::WstrToString(proc.Name);
-			if (!success) {
-				item["error"] = errorMsg;
+		nlohmann::json item;
+		item["success"] = success;
+		item["pid"] = proc.Pid;
+		item["name"] = StringUtils::WstrToString(proc.Name);
+		if (!success) {
+			item["error"] = res.error().message;
+			if (!res.error().traceback.empty()) {
+				item["traceback"] = res.error().traceback;
 			}
-			jOutputs.push_back(item);
 		}
-		std::cout << jOutputs.dump(4) << "\n";
+		std::cout << item.dump(4) << "\n";
 	} else {
-		for (const auto &[proc, errorMsg] : results) {
-			if (errorMsg.empty()) {
-				std::cout << std::format(
-					"SUCCESS: The process \"{}\" with PID {} has been {}.\n",
-					StringUtils::WstrToString(proc.Name),
-					proc.Pid,
-					actionVerb
-				);
-			} else {
-				std::cerr << std::format(
-					"ERROR: Failed to {} process \"{}\" with PID {}: {}\n",
-					actionVerb,
-					StringUtils::WstrToString(proc.Name),
-					proc.Pid,
-					errorMsg
-				);
-			}
+		if (success) {
+			std::cout << std::format(
+				"SUCCESS: The process \"{}\" with PID {} has been {}.\n",
+				StringUtils::WstrToString(proc.Name),
+				proc.Pid,
+				pastVerb
+			);
+		} else {
+			std::cerr << res.error().str() << "\n";
 		}
 	}
 }
@@ -229,96 +228,102 @@ void Formatter::PrintCommandResult(
 void Formatter::PrintThreadAction(
 	DWORD pid,
 	const std::wstring &processName,
-	const std::string &actionVerb, // "Suspended" or "Resumed"
-	const std::vector<ThreadAddrInfo> &successfulThreads,
-	const std::vector<std::pair<ThreadAddrInfo, std::string>> &failedThreads
+	Action action,
+	const std::vector<std::pair<ThreadAddrInfo, ResultVoid>> &results
 ) {
+	static const std::map<Action, std::pair<std::string, std::string>> actionMap = {
+		{Action::Suspend, {"Suspended", "suspend"}},
+		{Action::Resume, {"Resumed", "resume"}},
+	};
+
+	const auto &[pastVerb, verb] = actionMap.at(action);
+
 	if (m_useJson) {
 		nlohmann::json jOutputs = nlohmann::json::array();
 
-		for (const auto &t : successfulThreads) {
+		for (const auto &[t, res] : results) {
 			nlohmann::json item;
-			item["success"] = true;
+			item["success"] = res.has_value();
 			item["pid"] = pid;
 			item["name"] = StringUtils::WstrToString(processName);
 			item["tid"] = t.Tid;
 			item["start_address"] = t.StartAddress;
-			item["action"] = actionVerb;
-			jOutputs.push_back(item);
-		}
-
-		for (const auto &[t, err] : failedThreads) {
-			nlohmann::json item;
-			item["success"] = false;
-			item["pid"] = pid;
-			item["name"] = StringUtils::WstrToString(processName);
-			item["tid"] = t.Tid;
-			item["start_address"] = t.StartAddress;
-			item["action"] = actionVerb;
-			item["error"] = err;
+			item["action"] = pastVerb;
+			if (!res.has_value()) {
+				item["error"] = res.error().message;
+			}
 			jOutputs.push_back(item);
 		}
 
 		std::cout << jOutputs.dump(4) << "\n";
 	} else {
-		if (successfulThreads.empty() && failedThreads.empty()) {
+		if (results.empty()) {
 			return; // Nothing to print
 		}
 
-		size_t total = successfulThreads.size() + failedThreads.size();
-
-		if (total == 1) {
-			if (!successfulThreads.empty()) {
-				const auto &t = successfulThreads.front();
+		if (results.size() == 1) {
+			const auto &[t, res] = results.front();
+			if (res.has_value()) {
 				std::cout << std::format(
 					"{} thread {} of PID {} with StartAddress {}\n",
-					actionVerb,
+					pastVerb,
 					t.Tid,
 					pid,
 					t.StartAddress
 				);
 			} else {
-				const auto &[t, err] = failedThreads.front();
 				std::cerr << std::format(
 					"ERROR: Failed to {} thread {} of PID {}: {}\n",
-					StringUtils::ToLower(actionVerb),
+					verb,
 					t.Tid,
 					pid,
-					err
+					res.error().message
 				);
 			}
 		} else {
-			if (!successfulThreads.empty()) {
+			// Partition into successes and failures for grouped display
+			std::vector<const ThreadAddrInfo *> successes;
+			std::vector<std::pair<const ThreadAddrInfo *, std::string>> failures;
+
+			for (const auto &[t, res] : results) {
+				if (res.has_value()) {
+					successes.push_back(&t);
+				} else {
+					failures.push_back({&t, res.error().message});
+				}
+			}
+
+			if (!successes.empty()) {
 				std::cout << std::format(
 					"[SUCCESS] {} {} threads in {} (PID: {}):\n",
-					actionVerb,
-					successfulThreads.size(),
+					pastVerb,
+					successes.size(),
 					StringUtils::WstrToString(processName),
 					pid
 				);
 
-				for (const auto &t : successfulThreads) {
+				for (const auto *t : successes) {
 					std::cout << std::format(
-						"  TID: {:<4} | StartAddress: {}\n", t.Tid, t.StartAddress
+						"  TID: {:<4} | StartAddress: {}\n", t->Tid, t->StartAddress
 					);
 				}
 				std::cout << "\n";
 			}
 
-			if (!failedThreads.empty()) {
+			if (!failures.empty()) {
 				std::cerr << std::format(
 					"[FAILED] Could not {} {} threads in {} (PID: {}):\n",
-					StringUtils::ToLower(actionVerb),
-					failedThreads.size(),
+					verb,
+					failures.size(),
 					StringUtils::WstrToString(processName),
 					pid
 				);
 
-				for (const auto &[t, err] : failedThreads) {
+				for (const auto &[t, err] : failures) {
 					std::cerr << std::format(
 						"  TID: {:<4} | StartAddress: {:<40} | Error: {}\n",
-						t.Tid,
-						t.StartAddress,
+						t->Tid,
+						t->StartAddress,
 						err
 					);
 				}

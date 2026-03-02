@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <variant>
 #include <vector>
 #include <Windows.h>
 
@@ -47,11 +48,11 @@ namespace ProcessUtils {
 	/**
 	 * @brief Suspend a single thread by its thread ID.
 	 */
-	Result<bool, Error> SuspendThread(DWORD tid);
+	Result<std::monostate, Error> SuspendThread(DWORD tid);
 
 	/**
 	 * @brief Resume a single thread by its thread ID.
 	 */
-	Result<bool, Error> ResumeThread(DWORD tid);
+	Result<std::monostate, Error> ResumeThread(DWORD tid);
 
 } // namespace ProcessUtils

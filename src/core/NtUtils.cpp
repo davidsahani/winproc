@@ -63,7 +63,7 @@ Result<bool, Error> NtUtils::IsProcessSuspended(DWORD pid) {
 	);
 
 	if (!NtQuerySystemInformation) {
-		return Error("Failed to resolve NtQuerySystemInformation");
+		return Error("Symbol not found: ntdll.dll!NtQuerySystemInformation");
 	}
 
 	constexpr ULONG SystemProcessInformation = 5;
@@ -88,11 +88,9 @@ Result<bool, Error> NtUtils::IsProcessSuspended(DWORD pid) {
 	}
 
 	if (status != STATUS_SUCCESS) {
-		return Error(
-			std::format(
-				"NtQuerySystemInformation failed with status 0x{:08X}",
-				static_cast<unsigned long>(status)
-			)
+		return NtStatusErr(
+			status,
+			std::format("Failed to query system process information for PID: {}", pid)
 		);
 	}
 
@@ -125,10 +123,10 @@ Result<bool, Error> NtUtils::IsProcessSuspended(DWORD pid) {
 		);
 	}
 
-	return Error(std::format("Process with PID {} not found", pid));
+	return Error(std::format("No process found with PID: {}", pid));
 }
 
-Result<bool, Error> NtUtils::SuspendProcess(DWORD pid) {
+Result<std::monostate, Error> NtUtils::SuspendProcess(DWORD pid) {
 	HMODULE hNtDll = Instance().m_hNtDll;
 	if (!hNtDll) {
 		return Error("Failed to get module handle for ntdll.dll");
@@ -139,30 +137,29 @@ Result<bool, Error> NtUtils::SuspendProcess(DWORD pid) {
 		reinterpret_cast<NtSuspendProcessFn>(GetProcAddress(hNtDll, "NtSuspendProcess"));
 
 	if (!NtSuspendProcessPtr) {
-		return Error("Failed to resolve NtSuspendProcess");
+		return Error("Symbol not found: ntdll.dll!NtSuspendProcess");
 	}
 
 	HANDLE hProcess = OpenProcess(PROCESS_SUSPEND_RESUME, FALSE, pid);
 	if (!hProcess) {
-		return WinErr(GetLastError(), std::format("Failed to open process {}", pid));
+		return WinErr(
+			GetLastError(), std::format("Failed to open process with PID: {}", pid)
+		);
 	}
 
 	NTSTATUS status = NtSuspendProcessPtr(hProcess);
 	CloseHandle(hProcess);
 
 	if (status != STATUS_SUCCESS) {
-		return Error(
-			std::format(
-				"NtSuspendProcess failed with status 0x{:08X}",
-				static_cast<unsigned long>(status)
-			)
+		return NtStatusErr(
+			status, std::format("Failed to suspend process with PID: {}", pid)
 		);
 	}
 
-	return true;
+	return std::monostate{};
 }
 
-Result<bool, Error> NtUtils::ResumeProcess(DWORD pid) {
+Result<std::monostate, Error> NtUtils::ResumeProcess(DWORD pid) {
 	HMODULE hNtDll = Instance().m_hNtDll;
 	if (!hNtDll) {
 		return Error("Failed to get module handle for ntdll.dll");
@@ -173,27 +170,26 @@ Result<bool, Error> NtUtils::ResumeProcess(DWORD pid) {
 		reinterpret_cast<NtResumeProcessFn>(GetProcAddress(hNtDll, "NtResumeProcess"));
 
 	if (!NtResumeProcessPtr) {
-		return Error("Failed to resolve NtResumeProcess");
+		return Error("Symbol not found: ntdll.dll!NtResumeProcess");
 	}
 
 	HANDLE hProcess = OpenProcess(PROCESS_SUSPEND_RESUME, FALSE, pid);
 	if (!hProcess) {
-		return WinErr(GetLastError(), std::format("Failed to open process {}", pid));
+		return WinErr(
+			GetLastError(), std::format("Failed to open process with PID: {}", pid)
+		);
 	}
 
 	NTSTATUS status = NtResumeProcessPtr(hProcess);
 	CloseHandle(hProcess);
 
 	if (status != STATUS_SUCCESS) {
-		return Error(
-			std::format(
-				"NtResumeProcess failed with status 0x{:08X}",
-				static_cast<unsigned long>(status)
-			)
+		return NtStatusErr(
+			status, std::format("Failed to resume process with PID: {}", pid)
 		);
 	}
 
-	return true;
+	return std::monostate{};
 }
 
 Result<std::vector<ThreadInfo>, Error> NtUtils::GetProcessThreads(DWORD pid) {
@@ -214,6 +210,10 @@ Result<std::vector<ThreadInfo>, Error> NtUtils::GetProcessThreads(DWORD pid) {
 		GetProcAddress(hNtDll, "NtQuerySystemInformation")
 	);
 
+	if (!NtQuerySystemInformation) {
+		return Error("Symbol not found: ntdll.dll!NtQuerySystemInformation");
+	}
+
 	using NtQueryInformationThreadFn = NTSTATUS(NTAPI *)(
 		HANDLE ThreadHandle,
 		ULONG ThreadInformationClass,
@@ -226,8 +226,8 @@ Result<std::vector<ThreadInfo>, Error> NtUtils::GetProcessThreads(DWORD pid) {
 		GetProcAddress(hNtDll, "NtQueryInformationThread")
 	);
 
-	if (!NtQuerySystemInformation || !NtQueryInformationThread) {
-		return Error("Failed to resolve NtQuery APIs");
+	if (!NtQueryInformationThread) {
+		return Error("Symbol not found: ntdll.dll!NtQueryInformationThread");
 	}
 
 	constexpr ULONG SystemProcessInformation = 5;
@@ -250,11 +250,9 @@ Result<std::vector<ThreadInfo>, Error> NtUtils::GetProcessThreads(DWORD pid) {
 	}
 
 	if (status != STATUS_SUCCESS) {
-		return Error(
-			std::format(
-				"NtQuerySystemInformation failed with status 0x{:08X}",
-				static_cast<unsigned long>(status)
-			)
+		return NtStatusErr(
+			status,
+			std::format("Failed to query system thread information for PID: {}", pid)
 		);
 	}
 
@@ -309,7 +307,7 @@ Result<std::vector<ThreadInfo>, Error> NtUtils::GetProcessThreads(DWORD pid) {
 		);
 	}
 
-	return Error(std::format("Process with PID {} not found", pid));
+	return Error(std::format("No process found with PID: {}", pid));
 }
 
 Result<std::vector<ProcessInfo>, Error> NtUtils::GetProcessList() {
@@ -331,7 +329,7 @@ Result<std::vector<ProcessInfo>, Error> NtUtils::GetProcessList() {
 	);
 
 	if (!NtQuerySystemInformation) {
-		return Error("Failed to resolve NtQuerySystemInformation");
+		return Error("Symbol not found: ntdll.dll!NtQuerySystemInformation");
 	}
 
 	constexpr ULONG SystemProcessInformation = 5;
@@ -352,12 +350,7 @@ Result<std::vector<ProcessInfo>, Error> NtUtils::GetProcessList() {
 	}
 
 	if (status != STATUS_SUCCESS) {
-		return Error(
-			std::format(
-				"NtQuerySystemInformation failed with status 0x{:08X}",
-				static_cast<unsigned long>(status)
-			)
-		);
+		return NtStatusErr(status, std::format("Failed to query system process list"));
 	}
 
 	auto *procInfo = reinterpret_cast<SYSTEM_PROCESS_INFORMATION *>(buffer.get());
@@ -421,7 +414,7 @@ Result<std::wstring, Error> NtUtils::GetProcessPath(DWORD pid) {
 		(pfnNtQuerySystemInformation)GetProcAddress(hNtDll, "NtQuerySystemInformation");
 
 	if (!NtQuerySystemInformation) {
-		return Error("Failed to get address of NtQuerySystemInformation");
+		return Error("Symbol not found: ntdll.dll!NtQuerySystemInformation");
 	}
 
 	// Allocate buffer
@@ -455,11 +448,8 @@ Result<std::wstring, Error> NtUtils::GetProcessPath(DWORD pid) {
 	if (success) {
 		return DevicePathToDrivePath(out);
 	} else {
-		return Error(
-			std::format(
-				"NtQuerySystemInformation (0x58) failed or empty. Status: {:x}",
-				(unsigned int)status
-			)
+		return NtStatusErr(
+			status, std::format("Failed to query system process path for PID: {}", pid)
 		);
 	}
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <variant>
 #include <vector>
 #include <Windows.h>
 
@@ -28,12 +29,12 @@ public:
 	/**
      * @brief Suspend the specified process.
      */
-	static Result<bool, Error> SuspendProcess(DWORD pid);
+	static Result<std::monostate, Error> SuspendProcess(DWORD pid);
 
 	/**
      * @brief Resume the specified process.
      */
-	static Result<bool, Error> ResumeProcess(DWORD pid);
+	static Result<std::monostate, Error> ResumeProcess(DWORD pid);
 
 	/**
      * @brief Get threads information for the specified process.
