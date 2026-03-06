@@ -23,23 +23,31 @@ winproc -kill notepad.exe
 ```
 
 #### ⏸️ Suspend / ▶️ Resume
-> Pause or resume the execution of an entire process by its PID.
+> Pause or resume the execution of an entire process by its PID or name.
 ```bash
 winproc -suspend 1234
-winproc -resume 1234
+winproc -resume notepad.exe
 ```
 
 #### 🔍 Query Information
 > Gather detailed information about a specific process, including thread start addresses.
 ```bash
 winproc -query explorer.exe
-winproc -query 1234 -thread .*
+winproc -query 1234 -threads
+winproc -query 1234 -thread "MainThread"
 ```
 
 #### 🧵 Thread-Level Control
-> Target individual threads within a process to suspend, resume, or query them independently.
+> Target individual threads within a process to suspend, resume, or query them independently. You can target them by ID, Name, or Start Address Regex.
 ```bash
+# Target by Thread ID
 winproc -suspend 1234 -thread 5678
+
+# Target by Thread Name
+winproc -suspend 1234 -thread "WorkerThread"
+
+# Target by Start Address Regex
+winproc -resume 1234 -thread_addrs .*
 ```
 
 ---
