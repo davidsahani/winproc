@@ -100,6 +100,71 @@ static inline std::string FormatAddress(HANDLE hProcess, PVOID address) {
 	}
 }
 
+typedef HRESULT(WINAPI *GetThreadDescription_t)(
+	HANDLE hThread, PWSTR *ppszThreadDescription
+);
+
+static Result<std::string, Error> GetThreadName(DWORD tid) {
+	static auto pGetThreadDescription = reinterpret_cast<GetThreadDescription_t>(
+		GetProcAddress(GetModuleHandleW(L"kernelbase.dll"), "GetThreadDescription")
+	);
+
+	if (!pGetThreadDescription) {
+		pGetThreadDescription = reinterpret_cast<GetThreadDescription_t>(
+			GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetThreadDescription")
+		);
+	}
+
+	if (!pGetThreadDescription) {
+		return Error(
+			"GetThreadDescription symbol not found in kernelbase.dll or kernel32.dll"
+		);
+	}
+
+	HANDLE hThread = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, tid);
+	if (!hThread) {
+		return WinErr(GetLastError(), std::format("OpenThread failed for TID {}", tid));
+	}
+
+	// Auto-close thread handle
+	std::unique_ptr<void, decltype(&CloseHandle)> hThreadDtor(hThread, CloseHandle);
+
+	PWSTR pszDesc = nullptr;
+	HRESULT hr = pGetThreadDescription(hThread, &pszDesc);
+	std::string name = "";
+	if (SUCCEEDED(hr)) {
+		if (pszDesc) {
+			name = StringUtils::WstrToString(pszDesc);
+			LocalFree(pszDesc);
+		}
+	} else {
+		return WinErr(hr, std::format("GetThreadDescription failed for TID {}", tid));
+	}
+	return name;
+}
+
+Result<std::vector<ThreadNameInfo>, Error> ProcessUtils::GetThreadNames(DWORD pid) {
+	std::vector<ThreadNameInfo> nameInfoList;
+	auto threadsResult = NtUtils::GetProcessThreads(pid);
+	if (!threadsResult.has_value()) {
+		return threadsResult.error();
+	}
+
+	for (const auto &t : threadsResult.value()) {
+		auto threadNameRes = GetThreadName(t.Tid);
+		std::string threadName = "";
+		if (threadNameRes.has_value()) {
+			threadName = threadNameRes.value();
+		} else {
+			std::cerr << "Warning: " << threadNameRes.error().message << "\n";
+		}
+
+		nameInfoList.push_back({t.Tid, threadName});
+	}
+
+	return nameInfoList;
+}
+
 Result<std::vector<ThreadAddrInfo>, Error>
 ProcessUtils::GetThreadStartAddresses(DWORD pid) {
 	std::vector<ThreadAddrInfo> addrInfoList;
@@ -128,7 +193,16 @@ ProcessUtils::GetThreadStartAddresses(DWORD pid) {
 		PVOID bestAddress = t.Win32StartAddress ? t.Win32StartAddress
 												: t.NativeStartAddress;
 		std::string formattedAddr = FormatAddress(hProcess, bestAddress);
-		addrInfoList.push_back({t.Tid, formattedAddr});
+
+		auto threadNameRes = GetThreadName(t.Tid);
+		std::string threadName = "";
+		if (threadNameRes.has_value()) {
+			threadName = threadNameRes.value();
+		} else {
+			std::cerr << "Warning: " << threadNameRes.error().message << "\n";
+		}
+
+		addrInfoList.push_back({t.Tid, threadName, formattedAddr});
 	}
 
 	if (hProcess) {

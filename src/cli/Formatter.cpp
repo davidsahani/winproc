@@ -54,16 +54,25 @@ static std::string ThreadPriorityToString(int priority) {
 	}
 }
 
-void Formatter::PrintError(const std::string &message) {
+void Formatter::PrintSuccess(std::string_view message) {
+	if (m_useJson) {
+		nlohmann::json j = {{"success", message}};
+		std::cout << j.dump(4) << "\n";
+	} else {
+		std::cout << "SUCCESS: " << message << "\n";
+	}
+}
+
+void Formatter::PrintError(std::string_view message) {
 	if (m_useJson) {
 		nlohmann::json j = {{"error", message}};
 		std::cout << j.dump(4) << "\n";
 	} else {
-		std::cerr << message << "\n";
+		std::cerr << "ERROR: " << message << "\n";
 	}
 }
 
-void Formatter::PrintError(const std::string &message, const std::string &traceback) {
+void Formatter::PrintError(std::string_view message, std::string_view traceback) {
 	if (m_useJson) {
 		nlohmann::json j = {
 			{"error", message},
@@ -227,7 +236,7 @@ void Formatter::PrintCommandResult(
 
 void Formatter::PrintThreadAction(
 	DWORD pid,
-	const std::wstring &processName,
+	std::wstring_view processName,
 	Action action,
 	const std::vector<std::pair<ThreadAddrInfo, ResultVoid>> &results
 ) {
@@ -248,6 +257,11 @@ void Formatter::PrintThreadAction(
 			item["name"] = StringUtils::WstrToString(processName);
 			item["tid"] = t.Tid;
 			item["start_address"] = t.StartAddress;
+			auto prioRes = ProcessUtils::GetThreadPriorityLevel(t.Tid);
+			if (prioRes.has_value()) {
+				item["priority_level"] = prioRes.value();
+				item["priority"] = ThreadPriorityToString(prioRes.value());
+			}
 			item["action"] = pastVerb;
 			if (!res.has_value()) {
 				item["error"] = res.error().message;
@@ -265,7 +279,7 @@ void Formatter::PrintThreadAction(
 			const auto &[t, res] = results.front();
 			if (res.has_value()) {
 				std::cout << std::format(
-					"{} thread {} of PID {} with StartAddress {}\n",
+					"SUCCESS: {} thread {} of PID {} with StartAddress {}\n",
 					pastVerb,
 					t.Tid,
 					pid,
@@ -303,8 +317,15 @@ void Formatter::PrintThreadAction(
 				);
 
 				for (const auto *t : successes) {
+					auto prioRes = ProcessUtils::GetThreadPriorityLevel(t->Tid);
+					std::string prioStr = prioRes.has_value()
+											  ? ThreadPriorityToString(prioRes.value())
+											  : "Unknown";
 					std::cout << std::format(
-						"  TID: {:<4} | StartAddress: {}\n", t->Tid, t->StartAddress
+						"  TID: {:<4} | Priority: {:<15} | StartAddress: {}\n",
+						t->Tid,
+						prioStr,
+						t->StartAddress
 					);
 				}
 				std::cout << "\n";
@@ -320,9 +341,15 @@ void Formatter::PrintThreadAction(
 				);
 
 				for (const auto &[t, err] : failures) {
+					auto prioRes = ProcessUtils::GetThreadPriorityLevel(t->Tid);
+					std::string prioStr = prioRes.has_value()
+											  ? ThreadPriorityToString(prioRes.value())
+											  : "Unknown";
 					std::cerr << std::format(
-						"  TID: {:<4} | StartAddress: {:<40} | Error: {}\n",
+						"  TID: {:<4} | Priority: {:<15} | StartAddress: {:<40} | Error: "
+						"{}\n",
 						t->Tid,
+						prioStr,
 						t->StartAddress,
 						err
 					);
@@ -333,8 +360,139 @@ void Formatter::PrintThreadAction(
 	}
 }
 
+void Formatter::PrintThreadAction(
+	DWORD pid,
+	std::wstring_view procName,
+	Action action,
+	const std::vector<std::pair<ThreadNameInfo, ResultVoid>> &results
+) {
+	static const std::map<Action, std::pair<std::string, std::string>> actionMap = {
+		{Action::Suspend, {"Suspended", "suspend"}},
+		{Action::Resume, {"Resumed", "resume"}},
+	};
+
+	const auto &[pastVerb, verb] = actionMap.at(action);
+	std::string processName = StringUtils::WstrToString(procName);
+
+	if (m_useJson) {
+		nlohmann::json jOutputs = nlohmann::json::array();
+
+		for (const auto &[t, res] : results) {
+			nlohmann::json item;
+			item["success"] = res.has_value();
+			item["pid"] = pid;
+			item["name"] = processName;
+			item["tid"] = t.Tid;
+			item["thread_name"] = t.Name;
+			auto prioRes = ProcessUtils::GetThreadPriorityLevel(t.Tid);
+			if (prioRes.has_value()) {
+				item["priority_level"] = prioRes.value();
+				item["priority"] = ThreadPriorityToString(prioRes.value());
+			}
+			item["action"] = pastVerb;
+			if (!res.has_value()) {
+				item["error"] = res.error().message;
+			}
+			jOutputs.push_back(item);
+		}
+
+		std::cout << jOutputs.dump(4) << "\n";
+	} else {
+		if (results.empty()) {
+			return; // Nothing to print
+		}
+
+		if (results.size() == 1) {
+			const auto &[t, res] = results.front();
+			if (res.has_value()) {
+				std::cout << std::format(
+					"SUCCESS: {} thread {} named \"{}\" of process \"{}\" with PID {}\n",
+					pastVerb,
+					t.Tid,
+					t.Name,
+					processName,
+					pid
+				);
+			} else {
+				std::cerr << std::format(
+					"ERROR: Failed to {} thread {} named \"{}\" of process \"{}\" with "
+					"PID {}"
+					"\nReason: {}\n",
+					verb,
+					t.Tid,
+					t.Name,
+					processName,
+					pid,
+					res.error().message
+				);
+			}
+		} else {
+			// Partition into successes and failures for grouped display
+			std::vector<const ThreadNameInfo *> successes;
+			std::vector<std::pair<const ThreadNameInfo *, std::string>> failures;
+
+			for (const auto &[t, res] : results) {
+				if (res.has_value()) {
+					successes.push_back(&t);
+				} else {
+					failures.push_back({&t, res.error().message});
+				}
+			}
+
+			if (!successes.empty()) {
+				std::cout << std::format(
+					"[SUCCESS] {} {} threads in {} (PID: {}):\n",
+					pastVerb,
+					successes.size(),
+					processName,
+					pid
+				);
+
+				for (const auto *t : successes) {
+					auto prioRes = ProcessUtils::GetThreadPriorityLevel(t->Tid);
+					std::string prioStr = prioRes.has_value()
+											  ? ThreadPriorityToString(prioRes.value())
+											  : "Unknown";
+					std::cout << std::format(
+						"  TID: {:<4} | Priority: {:<15} | Name: {}\n",
+						t->Tid,
+						prioStr,
+						t->Name
+					);
+				}
+				std::cout << "\n";
+			}
+
+			if (!failures.empty()) {
+				std::cerr << std::format(
+					"[FAILED] Could not {} {} threads in {} (PID: {}):\n",
+					verb,
+					failures.size(),
+					processName,
+					pid
+				);
+
+				for (const auto &[t, err] : failures) {
+					auto prioRes = ProcessUtils::GetThreadPriorityLevel(t->Tid);
+					std::string prioStr = prioRes.has_value()
+											  ? ThreadPriorityToString(prioRes.value())
+											  : "Unknown";
+					std::cerr << std::format(
+						"  TID: {:<4} | Priority: {:<15} | Name: {:<40} | Error: {}\n",
+						t->Tid,
+						prioStr,
+						t->Name,
+						err
+					);
+				}
+				std::cerr << "\n";
+			}
+		}
+	}
+}
+
 void Formatter::PrintThreads(
-	DWORD pid, const std::wstring &processName, const std::vector<ThreadAddrInfo> &threads
+	DWORD pid, std::wstring_view processName, const std::vector<ThreadAddrInfo> &threads
 ) {
 	if (m_useJson) {
 		nlohmann::json jArr = nlohmann::json::array();
@@ -345,24 +503,54 @@ void Formatter::PrintThreads(
 				threadObj["PriorityLevel"] = prioRes.value();
 				threadObj["Priority"] = ThreadPriorityToString(prioRes.value());
 			}
+			if (!t.Name.empty()) {
+				threadObj["Name"] = t.Name;
+			}
 			threadObj["StartAddress"] = t.StartAddress;
 			jArr.push_back(threadObj);
 		}
 		std::cout << jArr.dump(4) << "\n";
 	} else {
+		size_t maxNameLen = 4; // Width of "Name" header
+		for (const auto &t : threads) {
+			size_t len = t.Name.empty() ? 1 : t.Name.length();
+			if (len > maxNameLen) {
+				maxNameLen = len;
+			}
+		}
+
 		std::cout << std::format(
 			"--- Threads for {} (PID: {}) ---\n",
 			StringUtils::WstrToString(processName),
 			pid
 		);
-		std::cout
-			<< std::format("{:<7}| {:<16}| {}\n", "TID", "Priority", "StartAddress");
-		std::cout << std::string(67, '-') << "\n";
+
+		std::string paddedHeaderName = "Name";
+		paddedHeaderName.append(maxNameLen - 4, ' ');
+
+		std::cout << std::format(
+			"{:<6} | {:<15} | {} | {}\n",
+			"TID",
+			"Priority",
+			paddedHeaderName,
+			"StartAddress"
+		);
+		std::cout << std::string(27 + maxNameLen + 20, '-') << "\n";
+
 		for (const auto &t : threads) {
 			auto prioRes = ProcessUtils::GetThreadPriorityLevel(t.Tid);
 			std::string prioStr =
 				prioRes.has_value() ? ThreadPriorityToString(prioRes.value()) : "Unknown";
-			std::cout << std::format("{:<9}  {:<18}{}\n", t.Tid, prioStr, t.StartAddress);
+
+			std::string nameStr = t.Name.empty() ? "-" : t.Name;
+			std::string paddedName = nameStr;
+			if (paddedName.length() < maxNameLen) {
+				paddedName.append(maxNameLen - paddedName.length(), ' ');
+			}
+
+			std::cout << std::format(
+				"{:<6}  {:<15}   {}   {}\n", t.Tid, prioStr, paddedName, t.StartAddress
+			);
 		}
 		std::cout << "\n";
 	}

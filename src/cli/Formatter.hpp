@@ -1,6 +1,5 @@
 #pragma once
 
-#include <string>
 #include <vector>
 
 #include "core/NtUtils.hpp"
@@ -23,19 +22,25 @@ public:
 	PrintCommandResult(const std::pair<ProcessInfo, ResultVoid> &result, Action action);
 	void PrintThreadAction(
 		DWORD pid,
-		const std::wstring &processName,
+		std::wstring_view processName,
 		Action action,
 		const std::vector<std::pair<ThreadAddrInfo, ResultVoid>> &results
 	);
+	void PrintThreadAction(
+		DWORD pid,
+		std::wstring_view processName,
+		Action action,
+		const std::vector<std::pair<ThreadNameInfo, ResultVoid>> &results
+	);
 	void PrintThreads(
 		DWORD pid,
-		const std::wstring &processName,
+		std::wstring_view processName,
 		const std::vector<ThreadAddrInfo> &threads
 	);
 
-	// Helper for errors that happen before command execution loop
-	void PrintError(const std::string &message);
-	void PrintError(const std::string &message, const std::string &traceback);
+	void PrintSuccess(std::string_view message);
+	void PrintError(std::string_view message);
+	void PrintError(std::string_view message, std::string_view traceback);
 
 private:
 	bool m_useJson;

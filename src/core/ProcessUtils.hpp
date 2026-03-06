@@ -7,9 +7,16 @@
 
 #include "NtUtils.hpp"
 
+// Define a struct to hold thread name info for output
+struct ThreadNameInfo {
+	DWORD Tid;
+	std::string Name;
+};
+
 // Define a struct to hold thread address info for output
 struct ThreadAddrInfo {
 	DWORD Tid;
+	std::string Name;
 	std::string StartAddress;
 };
 
@@ -19,6 +26,11 @@ namespace ProcessUtils {
 	* @brief Enable SeDebugPrivilege for the current process.
 	*/
 	bool EnableDebugPrivilege();
+
+	/**
+	* @brief Gets names for all threads in a process (lightweight, no symbol resolution).
+	*/
+	Result<std::vector<ThreadNameInfo>, Error> GetThreadNames(DWORD pid);
 
 	/**
 	 * @brief Gets start addresses for all threads in a process.
