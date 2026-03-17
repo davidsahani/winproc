@@ -6,13 +6,13 @@
 #include <algorithm>
 #include <cctype>
 #include <cwctype>
-#include <memory>
 #include <DbgHelp.h>
 
 #pragma comment(lib, "version.lib")
 
 #include "WinError.hpp"
 #include "utils/StringUtils.hpp"
+#include "utils/ScopeExit.hpp"
 
 bool ProcessUtils::EnableDebugPrivilege() {
 	HANDLE hToken;
@@ -27,7 +27,7 @@ bool ProcessUtils::EnableDebugPrivilege() {
 		return false;
 	}
 
-	std::unique_ptr<void, decltype(&CloseHandle)> hTokenDtor(hToken, CloseHandle);
+	SCOPE_EXIT(CloseHandle(hToken));
 
 	if (!LookupPrivilegeValue(NULL, SE_DEBUG_NAME, &luid)) {
 		std::cerr << WinErr(GetLastError(), "Failed to lookup privilege value: ").message
@@ -126,8 +126,7 @@ static Result<std::string, Error> GetThreadName(DWORD tid) {
 		return WinErr(GetLastError(), std::format("OpenThread failed for TID {}", tid));
 	}
 
-	// Auto-close thread handle
-	std::unique_ptr<void, decltype(&CloseHandle)> hThreadDtor(hThread, CloseHandle);
+	SCOPE_EXIT(CloseHandle(hThread));
 
 	PWSTR pszDesc = nullptr;
 	HRESULT hr = pGetThreadDescription(hThread, &pszDesc);
