@@ -18,4 +18,4 @@ namespace scope {
 } // namespace scope
 
 #define DEFER \
-[[maybe_unused]] auto UNIQUE_NAME(_defer_) = scope::scope_exit_helper + [&]()
+[[maybe_unused]] auto SCOPE_PP_UNIQUE_NAME(_defer_) = scope::scope_exit_helper + [&]()

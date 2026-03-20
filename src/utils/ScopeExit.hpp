@@ -34,13 +34,13 @@ namespace scope {
 	template <class F> ScopeExit(F) -> ScopeExit<std::decay_t<F>>;
 } // namespace scope
 
-#define CONCAT_IMPL(x, y) x##y
-#define CONCAT(x, y) CONCAT_IMPL(x,y)
+#define SCOPE_PP_CONCAT_IMPL(x, y) x##y
+#define SCOPE_PP_CONCAT(x, y) SCOPE_PP_CONCAT_IMPL(x, y)
 #ifdef __COUNTER__
-#define UNIQUE_NAME(base) CONCAT(base, __COUNTER__)
+#define SCOPE_PP_UNIQUE_NAME(base) SCOPE_PP_CONCAT(base, __COUNTER__)
 #else
-#define UNIQUE_NAME(base) CONCAT(base, __LINE__)
+#define SCOPE_PP_UNIQUE_NAME(base) SCOPE_PP_CONCAT(base, __LINE__)
 #endif
 
 #define SCOPE_EXIT(...) \
-[[maybe_unused]] auto UNIQUE_NAME(_scope_exit_) = scope::ScopeExit([&](){ __VA_ARGS__; });
+[[maybe_unused]] auto SCOPE_PP_UNIQUE_NAME(_scope_exit_) = scope::ScopeExit([&](){ __VA_ARGS__; });
