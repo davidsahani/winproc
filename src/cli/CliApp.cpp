@@ -3,58 +3,103 @@
 #include <iostream>
 #include <string>
 
-#include "cli/Formatter.hpp"
-#include "cli/commands/CommandHandlers.hpp"
 #include "commands/CommandHandlers.hpp"
 #include "external/argparse.hpp"
 
 int CliApp::Run(int argc, char *argv[]) {
 	argparse::ArgumentParser parser("winproc");
+	constexpr const char version[] = "1.0";
 
-	parser.add_argument("-list")
-		.help("List all processes")
+	// --- list ---
+	argparse::ArgumentParser listCmd("list", version, argparse::default_arguments::help);
+	listCmd.add_description("List all processes");
+
+	// --- kill ---
+	argparse::ArgumentParser killCmd("kill", version, argparse::default_arguments::help);
+	killCmd.add_description("Terminate process by <PID/Name>");
+	killCmd.add_argument("target").help("Process PID or name");
+
+	// --- query ---
+	argparse::ArgumentParser queryCmd("query", version, argparse::default_arguments::help);
+	queryCmd.add_description("Query process details by <PID/Name>");
+	queryCmd.add_argument("target").help("Process PID or name");
+
+	auto &queryMutex = queryCmd.add_mutually_exclusive_group();
+	queryMutex.add_argument("-thread")
+		.help("Target a specific thread by ID or name")
+		.default_value(std::string{});
+	queryMutex.add_argument("-threads")
+		.help("List all threads for the process")
 		.default_value(false)
 		.implicit_value(true);
 
-	parser.add_argument("-kill")
-		.help("Kill process by name or PID")
+	// --- suspend ---
+	argparse::ArgumentParser suspendCmd(
+		"suspend", version, argparse::default_arguments::help
+	);
+	suspendCmd.add_description("Suspend process by <PID/Name>");
+	suspendCmd.add_argument("target").help("Process PID or name");
+
+	auto &suspendMutex = suspendCmd.add_mutually_exclusive_group();
+	suspendMutex.add_argument("-thread")
+		.help("Target a specific thread by ID or name")
+		.default_value(std::string{});
+	suspendMutex.add_argument("-thread_addr")
+		.help("Target threads by start address regex")
 		.default_value(std::string{});
 
-	parser.add_argument("-suspend")
-		.help("Suspend process by name or PID")
+	suspendCmd.add_argument("-withpriority")
+		.help("Filter target threads by priority level")
 		.default_value(std::string{});
 
-	parser.add_argument("-resume")
-		.help("Resume process by name or PID")
+	// --- resume ---
+	argparse::ArgumentParser resumeCmd(
+		"resume", version, argparse::default_arguments::help
+	);
+	resumeCmd.add_description("Resume process by <PID/Name>");
+	resumeCmd.add_argument("target").help("Process PID or name");
+
+	auto &resumeMutex = resumeCmd.add_mutually_exclusive_group();
+	resumeMutex.add_argument("-thread")
+		.help("Target a specific thread by ID or name")
+		.default_value(std::string{});
+	resumeMutex.add_argument("-thread_addr")
+		.help("Target threads by start address regex")
 		.default_value(std::string{});
 
-	parser.add_argument("-query")
-		.help("Query process details by name or PID")
+	resumeCmd.add_argument("-withpriority")
+		.help("Filter target threads by priority level")
 		.default_value(std::string{});
 
-	parser.add_argument("-thread")
-		.help(
-			"Target a specific thread ID or Name (only valid with -suspend, -resume, or "
-			"-query)\n"
-			"  Usage: winproc -suspend/-resume/-query <PID> -thread <TID/Name>"
-		)
+	// --- setpriority ---
+	argparse::ArgumentParser setpriorityCmd(
+		"setpriority", version, argparse::default_arguments::help
+	);
+	setpriorityCmd.add_description("Set priority for process or thread by <PID/Name>");
+	setpriorityCmd.add_argument("target").help("Process PID or name");
+	setpriorityCmd.add_argument("value").help(
+		"Priority value (e.g., normal, high, real-time, etc. or integer)"
+	);
+
+	auto &setpriorityMutex = setpriorityCmd.add_mutually_exclusive_group();
+	setpriorityMutex.add_argument("-thread")
+		.help("Target a specific thread by ID or name")
+		.default_value(std::string{});
+	setpriorityMutex.add_argument("-thread_addr")
+		.help("Target threads by start address regex")
 		.default_value(std::string{});
 
-	parser.add_argument("-threads")
-		.help("List all threads for a process (only valid with -query)")
-		.default_value(false)
-		.implicit_value(true);
-
-	parser.add_argument("-thread_addrs")
-		.help(
-			"Target threads by start address regex (only valid with -suspend or -resume)"
-		)
+	setpriorityCmd.add_argument("-withpriority")
+		.help("Filter target threads by priority level")
 		.default_value(std::string{});
 
-	parser.add_argument("--json")
-		.help("Output to JSON")
-		.default_value(false)
-		.implicit_value(true);
+	// --- register subparsers ---
+	parser.add_subparser(listCmd);
+	parser.add_subparser(killCmd);
+	parser.add_subparser(queryCmd);
+	parser.add_subparser(suspendCmd);
+	parser.add_subparser(resumeCmd);
+	parser.add_subparser(setpriorityCmd);
 
 	try {
 		parser.parse_args(argc, argv);
@@ -64,91 +109,86 @@ int CliApp::Run(int argc, char *argv[]) {
 		return -1;
 	}
 
-	bool outputJson = parser.get<bool>("--json");
-	Formatter formatter(outputJson);
-
-	if (parser.get<bool>("-list")) {
-		return CommandHandlers::HandleList(formatter);
+	if (parser.is_subcommand_used("list")) {
+		return CommandHandlers::HandleList();
 	}
 
-	std::string targetKill = parser.get<std::string>("-kill");
-	if (!targetKill.empty()) {
-		return CommandHandlers::HandleKill(targetKill, formatter);
+	if (parser.is_subcommand_used("kill")) {
+		auto target = killCmd.get<std::string>("target");
+		return CommandHandlers::HandleKill(target);
 	}
 
-	std::string threadIdOrName = parser.get<std::string>("-thread");
-	bool queryAllThreads = parser.get<bool>("-threads");
-	std::string threadAddrRegex = parser.get<std::string>("-thread_addrs");
+	if (parser.is_subcommand_used("query")) {
+		auto target = queryCmd.get<std::string>("target");
 
-	std::string targetSuspend = parser.get<std::string>("-suspend");
-	std::string targetResume = parser.get<std::string>("-resume");
-	std::string targetQuery = parser.get<std::string>("-query");
-
-	bool threadUsed = parser.is_used("-thread");
-	bool threadsUsed = parser.is_used("-threads");
-	bool threadAddrsUsed = parser.is_used("-thread_addrs");
-
-	if ((threadUsed || threadsUsed || threadAddrsUsed) && targetSuspend.empty() &&
-		targetResume.empty() && targetQuery.empty()) {
-		std::cerr << "Error: thread arguments can only be used with -suspend, -resume, "
-					 "or -query.\n";
-		return -1;
+		if (queryCmd.is_used("-thread") || queryCmd.is_used("-threads")) {
+			auto threadIdOrName = queryCmd.get<std::string>("-thread");
+			bool queryAll = queryCmd.get<bool>("-threads");
+			return CommandHandlers::HandleQueryThread(target, threadIdOrName, queryAll);
+		}
+		return CommandHandlers::HandleQuery(target);
 	}
 
-	if (threadsUsed && targetQuery.empty()) {
-		std::cerr << "Error: -threads can only be used with -query.\n";
-		return -1;
+	if (parser.is_subcommand_used("suspend")) {
+		auto target = suspendCmd.get<std::string>("target");
+
+		std::string withPriority = "";
+		if (suspendCmd.is_used("-withpriority")) {
+			withPriority = suspendCmd.get<std::string>("-withpriority");
+		}
+		if (suspendCmd.is_used("-thread")) {
+			auto tid = suspendCmd.get<std::string>("-thread");
+			return CommandHandlers::HandleSuspendThread(target, tid, withPriority);
+		}
+		if (suspendCmd.is_used("-thread_addr")) {
+			auto regex = suspendCmd.get<std::string>("-thread_addr");
+			return CommandHandlers::HandleSuspendThreadByAddr(target, regex, withPriority);
+		}
+		return CommandHandlers::HandleSuspend(target);
 	}
 
-	if (threadAddrsUsed && !targetQuery.empty()) {
-		std::cerr << "Error: -thread_addrs cannot be used with -query.\n";
-		return -1;
+	if (parser.is_subcommand_used("resume")) {
+		auto target = resumeCmd.get<std::string>("target");
+
+		std::string withPriority = "";
+		if (resumeCmd.is_used("-withpriority")) {
+			withPriority = resumeCmd.get<std::string>("-withpriority");
+		}
+		if (resumeCmd.is_used("-thread")) {
+			auto tid = resumeCmd.get<std::string>("-thread");
+			return CommandHandlers::HandleResumeThread(target, tid, withPriority);
+		}
+		if (resumeCmd.is_used("-thread_addr")) {
+			auto regex = resumeCmd.get<std::string>("-thread_addr");
+			return CommandHandlers::HandleResumeThreadByAddr(target, regex, withPriority);
+		}
+		return CommandHandlers::HandleResume(target);
 	}
 
-	int threadFlagsUsed =
-		(threadUsed ? 1 : 0) + (threadsUsed ? 1 : 0) + (threadAddrsUsed ? 1 : 0);
-	if (threadFlagsUsed > 1) {
-		std::cerr << "Error: Only one of -thread, -threads, or -thread_addrs can be used "
-					 "at a time.\n";
-		return -1;
-	}
+	if (parser.is_subcommand_used("setpriority")) {
+		auto target = setpriorityCmd.get<std::string>("target");
+		auto priority = setpriorityCmd.get<std::string>("value");
 
-	if (!targetSuspend.empty()) {
-		if (threadAddrsUsed) {
-			return CommandHandlers::HandleSuspendThreadByAddr(
-				targetSuspend, threadAddrRegex, formatter
-			);
-		} else if (threadUsed) {
-			return CommandHandlers::HandleSuspendThread(
-				targetSuspend, threadIdOrName, formatter
+		std::string withPriority = "";
+		if (setpriorityCmd.is_used("-withpriority")) {
+			withPriority = setpriorityCmd.get<std::string>("-withpriority");
+		}
+		if (setpriorityCmd.is_used("-thread")) {
+			auto tid = setpriorityCmd.get<std::string>("-thread");
+			return CommandHandlers::HandleSetPriorityThread(
+				target, priority, tid, withPriority
 			);
 		}
-		return CommandHandlers::HandleSuspend(targetSuspend, formatter);
-	}
-
-	if (!targetResume.empty()) {
-		if (threadAddrsUsed) {
-			return CommandHandlers::HandleResumeThreadByAddr(
-				targetResume, threadAddrRegex, formatter
-			);
-		} else if (threadUsed) {
-			return CommandHandlers::HandleResumeThread(
-				targetResume, threadIdOrName, formatter
+		if (setpriorityCmd.is_used("-thread_addr")) {
+			auto regex = setpriorityCmd.get<std::string>("-thread_addr");
+			return CommandHandlers::HandleSetPriorityThreadByAddr(
+				target, priority, regex, withPriority
 			);
 		}
-		return CommandHandlers::HandleResume(targetResume, formatter);
+		return CommandHandlers::HandleSetPriority(target, priority);
 	}
 
-	if (!targetQuery.empty()) {
-		if (threadUsed || threadsUsed) {
-			return CommandHandlers::HandleQueryThread(
-				targetQuery, threadIdOrName, queryAllThreads, formatter
-			);
-		}
-		return CommandHandlers::HandleQuery(targetQuery, formatter);
-	}
-
-	std::cerr << "No valid command provided.\n";
+	std::cerr << "Error: No command provided.\n";
 	std::cerr << parser;
 	return -1;
 }

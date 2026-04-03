@@ -1,4 +1,5 @@
 #include "NtUtils.hpp"
+
 #include <string>
 #include <format>
 #include <vector>
@@ -6,6 +7,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <winternl.h>
+
+#include "WinError.hpp"
 
 // Only need these two from ntstatus.h — can't include the full header
 // because NtUtils.hpp already pulled in Windows.h (which defines a
@@ -16,8 +19,6 @@
 #ifndef STATUS_INFO_LENGTH_MISMATCH
 #define STATUS_INFO_LENGTH_MISMATCH ((NTSTATUS)0xC0000004L)
 #endif
-
-#include "WinError.hpp"
 
 // Info-class value: SystemProcessIdInformation == 0x58
 #ifndef SystemProcessIdInformation
@@ -38,16 +39,18 @@ NtUtils::NtUtils() {
 	m_hNtDll = GetModuleHandleW(L"ntdll.dll");
 }
 
-NtUtils &NtUtils::Instance() {
+HMODULE NtUtils::GetNtdllModule() {
 	static NtUtils instance;
-	return instance;
+	if (!instance.m_hNtDll) {
+		instance.m_hNtDll = GetModuleHandleW(L"ntdll.dll");
+	}
+	return instance.m_hNtDll;
 }
 
 Result<bool, Error> NtUtils::IsProcessSuspended(DWORD pid) {
-	HMODULE hNtDll = Instance().m_hNtDll;
-
+	HMODULE hNtDll = GetNtdllModule();
 	if (!hNtDll) {
-		return Error("Failed to get module handle for ntdll.dll");
+		return WinErr(GetLastError(), "Failed to load module ntdll.dll");
 	}
 
 	// Resolve NtQuerySystemInformation
@@ -87,7 +90,7 @@ Result<bool, Error> NtUtils::IsProcessSuspended(DWORD pid) {
 		);
 	}
 
-	if (status != STATUS_SUCCESS) {
+	if (!NT_SUCCESS(status)) {
 		return NtStatusErr(
 			status,
 			std::format("Failed to query system process information for PID: {}", pid)
@@ -127,9 +130,9 @@ Result<bool, Error> NtUtils::IsProcessSuspended(DWORD pid) {
 }
 
 Result<std::monostate, Error> NtUtils::SuspendProcess(DWORD pid) {
-	HMODULE hNtDll = Instance().m_hNtDll;
+	HMODULE hNtDll = GetNtdllModule();
 	if (!hNtDll) {
-		return Error("Failed to get module handle for ntdll.dll");
+		return WinErr(GetLastError(), "Failed to load module ntdll.dll");
 	}
 
 	using NtSuspendProcessFn = NTSTATUS(NTAPI *)(HANDLE ProcessHandle);
@@ -150,7 +153,7 @@ Result<std::monostate, Error> NtUtils::SuspendProcess(DWORD pid) {
 	NTSTATUS status = NtSuspendProcessPtr(hProcess);
 	CloseHandle(hProcess);
 
-	if (status != STATUS_SUCCESS) {
+	if (!NT_SUCCESS(status)) {
 		return NtStatusErr(
 			status, std::format("Failed to suspend process with PID: {}", pid)
 		);
@@ -160,9 +163,9 @@ Result<std::monostate, Error> NtUtils::SuspendProcess(DWORD pid) {
 }
 
 Result<std::monostate, Error> NtUtils::ResumeProcess(DWORD pid) {
-	HMODULE hNtDll = Instance().m_hNtDll;
+	HMODULE hNtDll = GetNtdllModule();
 	if (!hNtDll) {
-		return Error("Failed to get module handle for ntdll.dll");
+		return WinErr(GetLastError(), "Failed to load module ntdll.dll");
 	}
 
 	using NtResumeProcessFn = NTSTATUS(NTAPI *)(HANDLE ProcessHandle);
@@ -183,7 +186,7 @@ Result<std::monostate, Error> NtUtils::ResumeProcess(DWORD pid) {
 	NTSTATUS status = NtResumeProcessPtr(hProcess);
 	CloseHandle(hProcess);
 
-	if (status != STATUS_SUCCESS) {
+	if (!NT_SUCCESS(status)) {
 		return NtStatusErr(
 			status, std::format("Failed to resume process with PID: {}", pid)
 		);
@@ -192,11 +195,87 @@ Result<std::monostate, Error> NtUtils::ResumeProcess(DWORD pid) {
 	return std::monostate{};
 }
 
-Result<std::vector<ThreadInfo>, Error> NtUtils::GetProcessThreads(DWORD pid) {
-	HMODULE hNtDll = Instance().m_hNtDll;
-
+Result<std::vector<ProcessInfo>, Error> NtUtils::GetProcessList() {
+	HMODULE hNtDll = GetNtdllModule();
 	if (!hNtDll) {
-		return Error("Failed to get module handle for ntdll.dll");
+		return WinErr(GetLastError(), "Failed to load module ntdll.dll");
+	}
+
+	using NtQuerySystemInformationFn = NTSTATUS(NTAPI *)(
+		ULONG SystemInformationClass,
+		PVOID SystemInformation,
+		ULONG SystemInformationLength,
+		PULONG ReturnLength
+	);
+
+	auto NtQuerySystemInformation = reinterpret_cast<NtQuerySystemInformationFn>(
+		GetProcAddress(hNtDll, "NtQuerySystemInformation")
+	);
+
+	if (!NtQuerySystemInformation) {
+		return Error("Symbol not found: ntdll.dll!NtQuerySystemInformation");
+	}
+
+	constexpr ULONG SystemProcessInformation = 5;
+	ULONG bufferSize = 1024 * 1024; // Start with 1 MB
+	auto buffer = std::make_unique<BYTE[]>(bufferSize);
+
+	ULONG returnLength = 0;
+	NTSTATUS status = NtQuerySystemInformation(
+		SystemProcessInformation, buffer.get(), bufferSize, &returnLength
+	);
+
+	if (status == STATUS_INFO_LENGTH_MISMATCH) {
+		bufferSize = returnLength;
+		buffer = std::make_unique<BYTE[]>(bufferSize);
+		status = NtQuerySystemInformation(
+			SystemProcessInformation, buffer.get(), bufferSize, &returnLength
+		);
+	}
+
+	if (!NT_SUCCESS(status)) {
+		return NtStatusErr(status, std::format("Failed to query system process list"));
+	}
+
+	auto *procInfo = reinterpret_cast<SYSTEM_PROCESS_INFORMATION *>(buffer.get());
+	std::vector<ProcessInfo> processList;
+	processList.reserve(bufferSize);
+
+	while (true) {
+		ProcessInfo info{};
+		info.Pid =
+			static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(procInfo->UniqueProcessId));
+		info.ParentPid =
+			static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(procInfo->Reserved2));
+		info.SessionId = procInfo->SessionId;
+		info.BasePriority = procInfo->BasePriority;
+		info.Memory = procInfo->WorkingSetSize;
+
+		if (procInfo->ImageName.Buffer) {
+			info.Name = std::wstring(
+				procInfo->ImageName.Buffer, procInfo->ImageName.Length / sizeof(WCHAR)
+			);
+		} else if (info.Pid == 0) {
+			info.Name = L"Idle";
+		} else {
+			info.Name = L"System";
+		}
+
+		processList.push_back(info);
+
+		if (procInfo->NextEntryOffset == 0) break;
+		procInfo = reinterpret_cast<SYSTEM_PROCESS_INFORMATION *>(
+			reinterpret_cast<BYTE *>(procInfo) + procInfo->NextEntryOffset
+		);
+	}
+
+	return processList;
+}
+
+Result<std::vector<ThreadInfo>, Error> NtUtils::GetProcessThreads(DWORD pid) {
+	HMODULE hNtDll = GetNtdllModule();
+	if (!hNtDll) {
+		return WinErr(GetLastError(), "Failed to load module ntdll.dll");
 	}
 
 	using NtQuerySystemInformationFn = NTSTATUS(NTAPI *)(
@@ -249,7 +328,7 @@ Result<std::vector<ThreadInfo>, Error> NtUtils::GetProcessThreads(DWORD pid) {
 		);
 	}
 
-	if (status != STATUS_SUCCESS) {
+	if (!NT_SUCCESS(status)) {
 		return NtStatusErr(
 			status,
 			std::format("Failed to query system thread information for PID: {}", pid)
@@ -257,7 +336,6 @@ Result<std::vector<ThreadInfo>, Error> NtUtils::GetProcessThreads(DWORD pid) {
 	}
 
 	auto *procInfo = reinterpret_cast<SYSTEM_PROCESS_INFORMATION *>(buffer.get());
-	std::vector<ThreadInfo> threadsList;
 
 	while (true) {
 		if (reinterpret_cast<ULONG_PTR>(procInfo->UniqueProcessId) ==
@@ -267,6 +345,9 @@ Result<std::vector<ThreadInfo>, Error> NtUtils::GetProcessThreads(DWORD pid) {
 			auto *threads = reinterpret_cast<SYSTEM_THREAD_INFORMATION *>(
 				reinterpret_cast<BYTE *>(procInfo) + sizeof(SYSTEM_PROCESS_INFORMATION)
 			);
+
+			std::vector<ThreadInfo> threadsList;
+			threadsList.reserve(threadCount);
 
 			for (ULONG i = 0; i < threadCount; ++i) {
 				ThreadInfo info{};
@@ -296,6 +377,9 @@ Result<std::vector<ThreadInfo>, Error> NtUtils::GetProcessThreads(DWORD pid) {
 					info.Win32StartAddress = nullptr;
 				}
 
+				info.BasePriority = threads[i].BasePriority;
+				info.ThreadState = threads[i].ThreadState;
+				info.WaitReason = threads[i].WaitReason;
 				threadsList.push_back(info);
 			}
 			return threadsList;
@@ -310,102 +394,10 @@ Result<std::vector<ThreadInfo>, Error> NtUtils::GetProcessThreads(DWORD pid) {
 	return Error(std::format("No process found with PID: {}", pid));
 }
 
-Result<std::vector<ProcessInfo>, Error> NtUtils::GetProcessList() {
-	HMODULE hNtDll = Instance().m_hNtDll;
-
-	if (!hNtDll) {
-		return Error("Failed to get module handle for ntdll.dll");
-	}
-
-	using NtQuerySystemInformationFn = NTSTATUS(NTAPI *)(
-		ULONG SystemInformationClass,
-		PVOID SystemInformation,
-		ULONG SystemInformationLength,
-		PULONG ReturnLength
-	);
-
-	auto NtQuerySystemInformation = reinterpret_cast<NtQuerySystemInformationFn>(
-		GetProcAddress(hNtDll, "NtQuerySystemInformation")
-	);
-
-	if (!NtQuerySystemInformation) {
-		return Error("Symbol not found: ntdll.dll!NtQuerySystemInformation");
-	}
-
-	constexpr ULONG SystemProcessInformation = 5;
-	ULONG bufferSize = 1024 * 1024; // Start with 1 MB
-	auto buffer = std::make_unique<BYTE[]>(bufferSize);
-
-	ULONG returnLength = 0;
-	NTSTATUS status = NtQuerySystemInformation(
-		SystemProcessInformation, buffer.get(), bufferSize, &returnLength
-	);
-
-	if (status == STATUS_INFO_LENGTH_MISMATCH) {
-		bufferSize = returnLength;
-		buffer = std::make_unique<BYTE[]>(bufferSize);
-		status = NtQuerySystemInformation(
-			SystemProcessInformation, buffer.get(), bufferSize, &returnLength
-		);
-	}
-
-	if (status != STATUS_SUCCESS) {
-		return NtStatusErr(status, std::format("Failed to query system process list"));
-	}
-
-	auto *procInfo = reinterpret_cast<SYSTEM_PROCESS_INFORMATION *>(buffer.get());
-	std::vector<ProcessInfo> processList;
-
-	constexpr ULONG StateWaiting = 5;
-	constexpr ULONG ReasonSuspended = 5;
-
-	while (true) {
-		ProcessInfo info{};
-		info.Pid =
-			static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(procInfo->UniqueProcessId));
-
-		if (procInfo->ImageName.Buffer) {
-			info.Name = std::wstring(
-				procInfo->ImageName.Buffer, procInfo->ImageName.Length / sizeof(WCHAR)
-			);
-		} else if (info.Pid == 0) {
-			info.Name = L"Idle";
-		} else {
-			info.Name = L"System";
-		}
-
-		ULONG threadCount = procInfo->NumberOfThreads;
-		info.Suspended = false;
-		if (threadCount > 0) {
-			auto *threads = reinterpret_cast<SYSTEM_THREAD_INFORMATION *>(
-				reinterpret_cast<BYTE *>(procInfo) + sizeof(SYSTEM_PROCESS_INFORMATION)
-			);
-			bool allSuspended = true;
-			for (ULONG i = 0; i < threadCount; ++i) {
-				if (threads[i].ThreadState != StateWaiting ||
-					threads[i].WaitReason != ReasonSuspended) {
-					allSuspended = false;
-					break;
-				}
-			}
-			info.Suspended = allSuspended;
-		}
-
-		processList.push_back(info);
-
-		if (procInfo->NextEntryOffset == 0) break;
-		procInfo = reinterpret_cast<SYSTEM_PROCESS_INFORMATION *>(
-			reinterpret_cast<BYTE *>(procInfo) + procInfo->NextEntryOffset
-		);
-	}
-
-	return processList;
-}
-
 Result<std::wstring, Error> NtUtils::GetProcessPath(DWORD pid) {
-	HMODULE hNtDll = Instance().m_hNtDll;
+	HMODULE hNtDll = GetNtdllModule();
 	if (!hNtDll) {
-		return Error("Failed to get module handle for ntdll.dll");
+		return WinErr(GetLastError(), "Failed to load module ntdll.dll");
 	}
 
 	using pfnNtQuerySystemInformation =

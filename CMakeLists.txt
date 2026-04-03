@@ -29,6 +29,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} PRIVATE
     ntdll
     dbghelp
+    Wtsapi32
 )
 
 # Add custom command to copy symbol server DLLs for accurate thread start address resolution

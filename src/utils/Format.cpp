@@ -71,10 +71,10 @@ std::string format_win32(DWORD winError) {
 	return format_hresult(HRESULT_FROM_WIN32(winError));
 }
 
-std::string format_ntstatus(LONG status) {
+std::string format_ntstatus(NTSTATUS status) {
 	HMODULE hNtDll = GetModuleHandleW(L"ntdll.dll");
 	if (!hNtDll) {
-		return std::format("NTSTATUS 0x{:08X}", static_cast<long>(status));
+		return std::format("Unknown NTSTATUS: 0x{:08X}", static_cast<long>(status));
 	}
 
 	WCHAR buffer[512] = {0};

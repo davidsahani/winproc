@@ -1,38 +1,36 @@
 #include "ProcessUtils.hpp"
 
-#include <errhandlingapi.h>
-#include <iostream>
 #include <format>
 #include <algorithm>
-#include <cctype>
 #include <cwctype>
 #include <DbgHelp.h>
 
 #pragma comment(lib, "version.lib")
 
 #include "WinError.hpp"
-#include "utils/StringUtils.hpp"
 #include "utils/ScopeExit.hpp"
+#include "utils/StringUtils.hpp"
 
-bool ProcessUtils::EnableDebugPrivilege() {
+ResultVoid ProcessUtils::EnableDebugPrivilege(HANDLE hProcess) {
 	HANDLE hToken;
 	LUID luid;
 	TOKEN_PRIVILEGES tkp;
 
-	if (!OpenProcessToken(
-			GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken
-		)) {
-		std::cerr << WinErr(GetLastError(), "Failed to open process token: ").message
-				  << "\n";
-		return false;
+	if (!OpenProcessToken(hProcess, TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) {
+		const DWORD pid = GetProcessId(hProcess);
+		return WinErr(
+			GetLastError(), std::format("Failed to open process token for PID {}", pid)
+		);
 	}
 
 	SCOPE_EXIT(CloseHandle(hToken));
 
 	if (!LookupPrivilegeValue(NULL, SE_DEBUG_NAME, &luid)) {
-		std::cerr << WinErr(GetLastError(), "Failed to lookup privilege value: ").message
-				  << "\n";
-		return false;
+		const DWORD pid = GetProcessId(hProcess);
+		return WinErr(
+			GetLastError(),
+			std::format("Failed to lookup privilege value for PID {}", pid)
+		);
 	}
 
 	tkp.PrivilegeCount = 1;
@@ -42,12 +40,14 @@ bool ProcessUtils::EnableDebugPrivilege() {
 	if (!AdjustTokenPrivileges(
 			hToken, FALSE, &tkp, sizeof(TOKEN_PRIVILEGES), NULL, NULL
 		)) {
-		std::cerr << WinErr(GetLastError(), "Failed to adjust token privileges").message
-				  << "\n";
-		return false;
+		const DWORD pid = GetProcessId(hProcess);
+		return WinErr(
+			GetLastError(),
+			std::format("Failed to adjust token privileges for PID {}", pid)
+		);
 	}
 
-	return true;
+	return std::monostate{};
 }
 
 // Format a thread or function address into a readable string (e.g. module!function).
@@ -117,7 +117,8 @@ static Result<std::string, Error> GetThreadName(DWORD tid) {
 
 	if (!pGetThreadDescription) {
 		return Error(
-			"GetThreadDescription symbol not found in kernelbase.dll or kernel32.dll"
+			"GetThreadDescription symbol not found in kernelbase.dll or "
+			"kernel32.dll"
 		);
 	}
 
@@ -149,16 +150,8 @@ Result<std::vector<ThreadNameInfo>, Error> ProcessUtils::GetThreadNames(DWORD pi
 		return threadsResult.error();
 	}
 
-	for (const auto &t : threadsResult.value()) {
-		auto threadNameRes = GetThreadName(t.Tid);
-		std::string threadName = "";
-		if (threadNameRes.has_value()) {
-			threadName = threadNameRes.value();
-		} else {
-			std::cerr << "Warning: " << threadNameRes.error().message << "\n";
-		}
-
-		nameInfoList.push_back({t.Tid, threadName});
+	for (const auto thread : threadsResult.value()) {
+		nameInfoList.push_back({thread, GetThreadName(thread.Tid).value_or("")});
 	}
 
 	return nameInfoList;
@@ -188,20 +181,13 @@ ProcessUtils::GetThreadStartAddresses(DWORD pid) {
 		}
 	}
 
-	for (const auto &t : threadsResult.value()) {
+	for (const auto t : threadsResult.value()) {
 		PVOID bestAddress = t.Win32StartAddress ? t.Win32StartAddress
 												: t.NativeStartAddress;
 		std::string formattedAddr = FormatAddress(hProcess, bestAddress);
 
-		auto threadNameRes = GetThreadName(t.Tid);
-		std::string threadName = "";
-		if (threadNameRes.has_value()) {
-			threadName = threadNameRes.value();
-		} else {
-			std::cerr << "Warning: " << threadNameRes.error().message << "\n";
-		}
-
-		addrInfoList.push_back({t.Tid, threadName, formattedAddr});
+		std::string threadName = GetThreadName(t.Tid).value_or("");
+		addrInfoList.push_back({t, threadName, formattedAddr});
 	}
 
 	if (hProcess) {
@@ -213,51 +199,37 @@ ProcessUtils::GetThreadStartAddresses(DWORD pid) {
 }
 
 Result<std::vector<ProcessInfo>, Error>
-ProcessUtils::GetTargetProcesses(const std::string &input) {
-	if (input.empty()) {
-		return Error("Input is empty.");
+ProcessUtils::GetTargetProcesses(std::string_view target) {
+	if (target.empty()) {
+		return Error("Process name or PID cannot be empty.");
 	}
 
-	bool isNumeric = std::all_of(input.begin(), input.end(), [](unsigned char c) {
-		return std::isdigit(c);
-	});
-	DWORD targetPid = 0;
-	if (isNumeric) {
-		try {
-			targetPid = static_cast<DWORD>(std::stoul(input));
-		} catch (...) {
-			isNumeric = false;
-		}
-	}
+	auto targetPidOpt = StringUtils::TryParseInt(target);
 
 	auto listResult = NtUtils::GetProcessList();
-	if (!listResult.has_value()) {
-		return Error(listResult.error().str());
-	}
+	if (!listResult) return listResult;
 
 	std::vector<ProcessInfo> targets;
-	std::wstring wideInput;
-	if (!isNumeric) {
-		wideInput = std::wstring(input.begin(), input.end());
-		std::transform(wideInput.begin(), wideInput.end(), wideInput.begin(), ::towlower);
+	std::wstring procName;
+	if (!targetPidOpt) {
+		procName = std::wstring(target.begin(), target.end());
+		std::transform(procName.begin(), procName.end(), procName.begin(), ::towlower);
 	}
 
 	for (const auto &proc : listResult.value()) {
-		if (isNumeric) {
-			if (proc.Pid == targetPid) {
+		if (targetPidOpt) {
+			if (proc.Pid == static_cast<DWORD>(targetPidOpt.value())) {
 				targets.push_back(proc);
 			}
 		} else {
 			std::wstring name = proc.Name;
 			std::transform(name.begin(), name.end(), name.begin(), ::towlower);
-			if (name == wideInput) {
-				targets.push_back(proc);
-			}
+			if (name == procName) targets.push_back(proc);
 		}
 	}
 
 	if (targets.empty()) {
-		return Error(std::format("Process '{}' not found", input));
+		return Error(std::format("Process '{}' not found", target));
 	}
 
 	return targets;
@@ -290,8 +262,8 @@ QueryVersionString(const BYTE *verInfo, WORD lang, WORD codepage, const wchar_t 
 	return out;
 }
 
-static Result<std::wstring, Error>
-GetFileDescriptionFromFileVersionInfo(const std::wstring &file) {
+Result<std::wstring, Error>
+ProcessUtils::GetFileDescriptionFromPath(const std::wstring &file) {
 	DWORD dummy = 0;
 	DWORD size = GetFileVersionInfoSizeW(file.c_str(), &dummy); // call Size* first
 	if (size == 0) {
@@ -386,10 +358,36 @@ GetFileDescriptionFromFileVersionInfo(const std::wstring &file) {
 
 Result<std::wstring, Error> ProcessUtils::GetProcessDescription(DWORD pid) {
 	auto pathRes = NtUtils::GetProcessPath(pid);
-	if (!pathRes.has_value()) {
-		return Error(pathRes.error().str());
+	if (!pathRes) return pathRes.error();
+	return GetFileDescriptionFromPath(pathRes.value());
+}
+
+Result<std::monostate, Error> ProcessUtils::SuspendThread(DWORD tid) {
+	HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, tid);
+	if (!hThread) {
+		return WinErr(GetLastError(), std::format("OpenThread failed for TID {}", tid));
 	}
-	return GetFileDescriptionFromFileVersionInfo(pathRes.value());
+	DWORD prevCount = ::SuspendThread(hThread);
+	DWORD err = GetLastError();
+	CloseHandle(hThread);
+	if (prevCount == static_cast<DWORD>(-1)) {
+		return WinErr(err, std::format("SuspendThread failed for TID {}", tid));
+	}
+	return std::monostate{};
+}
+
+Result<std::monostate, Error> ProcessUtils::ResumeThread(DWORD tid) {
+	HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, tid);
+	if (!hThread) {
+		return WinErr(GetLastError(), std::format("OpenThread failed for TID {}", tid));
+	}
+	DWORD prevCount = ::ResumeThread(hThread);
+	DWORD err = GetLastError();
+	CloseHandle(hThread);
+	if (prevCount == static_cast<DWORD>(-1)) {
+		return WinErr(err, std::format("ResumeThread failed for TID {}", tid));
+	}
+	return std::monostate{};
 }
 
 Result<DWORD, Error> ProcessUtils::GetProcessPriority(DWORD pid) {
@@ -420,30 +418,32 @@ Result<int, Error> ProcessUtils::GetThreadPriorityLevel(DWORD tid) {
 	return priority;
 }
 
-Result<std::monostate, Error> ProcessUtils::SuspendThread(DWORD tid) {
-	HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, tid);
-	if (!hThread) {
-		return WinErr(GetLastError(), std::format("OpenThread failed for TID {}", tid));
+Result<std::monostate, Error>
+ProcessUtils::SetProcessPriority(DWORD pid, DWORD priorityClass) {
+	HANDLE hProcess = OpenProcess(PROCESS_SET_INFORMATION, FALSE, pid);
+	if (!hProcess) {
+		return WinErr(GetLastError(), std::format("OpenProcess failed for PID {}", pid));
 	}
-	DWORD prevCount = ::SuspendThread(hThread);
+	BOOL success = SetPriorityClass(hProcess, priorityClass);
 	DWORD err = GetLastError();
-	CloseHandle(hThread);
-	if (prevCount == static_cast<DWORD>(-1)) {
-		return WinErr(err, std::format("SuspendThread failed for TID {}", tid));
+	CloseHandle(hProcess);
+	if (!success) {
+		return WinErr(err, std::format("SetPriorityClass failed for PID {}", pid));
 	}
 	return std::monostate{};
 }
 
-Result<std::monostate, Error> ProcessUtils::ResumeThread(DWORD tid) {
-	HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, tid);
+Result<std::monostate, Error>
+ProcessUtils::SetThreadPriorityLevel(DWORD tid, int priorityLevel) {
+	HANDLE hThread = OpenThread(THREAD_SET_INFORMATION, FALSE, tid);
 	if (!hThread) {
 		return WinErr(GetLastError(), std::format("OpenThread failed for TID {}", tid));
 	}
-	DWORD prevCount = ::ResumeThread(hThread);
+	BOOL success = SetThreadPriority(hThread, priorityLevel);
 	DWORD err = GetLastError();
 	CloseHandle(hThread);
-	if (prevCount == static_cast<DWORD>(-1)) {
-		return WinErr(err, std::format("ResumeThread failed for TID {}", tid));
+	if (!success) {
+		return WinErr(err, std::format("SetThreadPriority failed for TID {}", tid));
 	}
 	return std::monostate{};
 }

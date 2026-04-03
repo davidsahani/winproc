@@ -9,13 +9,13 @@
 
 // Define a struct to hold thread name info for output
 struct ThreadNameInfo {
-	DWORD Tid;
+	ThreadInfo info;
 	std::string Name;
 };
 
 // Define a struct to hold thread address info for output
 struct ThreadAddrInfo {
-	DWORD Tid;
+	ThreadInfo info;
 	std::string Name;
 	std::string StartAddress;
 };
@@ -25,7 +25,7 @@ namespace ProcessUtils {
 	/**
 	* @brief Enable SeDebugPrivilege for the current process.
 	*/
-	bool EnableDebugPrivilege();
+	ResultVoid EnableDebugPrivilege(HANDLE hProcess);
 
 	/**
 	* @brief Gets names for all threads in a process (lightweight, no symbol resolution).
@@ -40,12 +40,27 @@ namespace ProcessUtils {
 	/**
 	 * @brief Resolves a process name or PID string to a list of matching processes.
 	 */
-	Result<std::vector<ProcessInfo>, Error> GetTargetProcesses(const std::string &input);
+	Result<std::vector<ProcessInfo>, Error> GetTargetProcesses(std::string_view target);
+
+	/**
+	 * @brief Gets the file description for the process from its executable version info.
+	 */
+	Result<std::wstring, Error> GetFileDescriptionFromPath(const std::wstring &file);
 
 	/**
 	 * @brief Gets the file description for the process from its executable version info.
 	 */
 	Result<std::wstring, Error> GetProcessDescription(DWORD pid);
+
+	/**
+	 * @brief Suspend a single thread by its thread ID.
+	 */
+	Result<std::monostate, Error> SuspendThread(DWORD tid);
+
+	/**
+	 * @brief Resume a single thread by its thread ID.
+	 */
+	Result<std::monostate, Error> ResumeThread(DWORD tid);
 
 	/**
 	 * @brief Gets the priority class for the specified process.
@@ -58,13 +73,13 @@ namespace ProcessUtils {
 	Result<int, Error> GetThreadPriorityLevel(DWORD tid);
 
 	/**
-	 * @brief Suspend a single thread by its thread ID.
+	 * @brief Sets the priority class for the specified process.
 	 */
-	Result<std::monostate, Error> SuspendThread(DWORD tid);
+	Result<std::monostate, Error> SetProcessPriority(DWORD pid, DWORD priorityClass);
 
 	/**
-	 * @brief Resume a single thread by its thread ID.
+	 * @brief Sets the priority level for the specified thread.
 	 */
-	Result<std::monostate, Error> ResumeThread(DWORD tid);
+	Result<std::monostate, Error> SetThreadPriorityLevel(DWORD tid, int priorityLevel);
 
 } // namespace ProcessUtils

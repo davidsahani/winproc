@@ -1,366 +1,403 @@
 #include "Formatter.hpp"
+
 #include <iostream>
 #include <format>
 #include <map>
 #include <tuple>
+#include <regex>
 
-#include "external/json.hpp"
 #include "utils/StringUtils.hpp"
 #include "core/ProcessUtils.hpp"
-
-Formatter::Formatter(bool useJson) : m_useJson(useJson) {}
-
-static std::wstring PriorityClassToWString(DWORD priorityClass) {
-	switch (priorityClass) {
-		case IDLE_PRIORITY_CLASS:
-			return L"Idle";
-		case BELOW_NORMAL_PRIORITY_CLASS:
-			return L"Below Normal";
-		case NORMAL_PRIORITY_CLASS:
-			return L"Normal";
-		case ABOVE_NORMAL_PRIORITY_CLASS:
-			return L"Above Normal";
-		case HIGH_PRIORITY_CLASS:
-			return L"High";
-		case REALTIME_PRIORITY_CLASS:
-			return L"Realtime";
-		case PROCESS_MODE_BACKGROUND_BEGIN:
-			return L"Background Begin";
-		case PROCESS_MODE_BACKGROUND_END:
-			return L"Background End";
-		default:
-			return std::to_wstring(priorityClass);
-	}
-}
-
-static std::string ThreadPriorityToString(int priority) {
-	switch (priority) {
-		case THREAD_PRIORITY_IDLE:
-			return "Idle";
-		case THREAD_PRIORITY_LOWEST:
-			return "Lowest";
-		case THREAD_PRIORITY_BELOW_NORMAL:
-			return "Below Normal";
-		case THREAD_PRIORITY_NORMAL:
-			return "Normal";
-		case THREAD_PRIORITY_ABOVE_NORMAL:
-			return "Above Normal";
-		case THREAD_PRIORITY_HIGHEST:
-			return "Highest";
-		case THREAD_PRIORITY_TIME_CRITICAL:
-			return "Time Critical";
-		default:
-			return std::to_string(priority);
-	}
-}
+#include "core/Convert.hpp"
 
 void Formatter::PrintSuccess(std::string_view message) {
-	if (m_useJson) {
-		nlohmann::json j = {{"success", message}};
-		std::cout << j.dump(4) << "\n";
-	} else {
-		std::cout << "SUCCESS: " << message << "\n";
-	}
+	std::cout << "SUCCESS: " << message << "\n";
+}
+
+void Formatter::PrintWarning(std::string_view message) {
+	std::cerr << "WARNING: " << message << "\n";
 }
 
 void Formatter::PrintError(std::string_view message) {
-	if (m_useJson) {
-		nlohmann::json j = {{"error", message}};
-		std::cout << j.dump(4) << "\n";
-	} else {
-		std::cerr << "ERROR: " << message << "\n";
-	}
+	std::cerr << "ERROR: " << message << "\n";
+}
+
+void Formatter::PrintWarning(std::string_view message, std::string_view traceback) {
+	std::cerr << "WARNING: " << message << "\n";
+	std::cerr << "TRACEBACK: " << traceback << "\n";
 }
 
 void Formatter::PrintError(std::string_view message, std::string_view traceback) {
-	if (m_useJson) {
-		nlohmann::json j = {
-			{"error", message},
-			{"traceback", traceback},
-		};
-		std::cout << j.dump(4) << "\n";
-	} else {
-		std::cerr << "ERROR: " << message << "\n";
-		std::cerr << "TRACEBACK: " << traceback << "\n";
-	}
+	std::cerr << "ERROR: " << message << "\n";
+	std::cerr << "TRACEBACK: " << traceback << "\n";
 }
 
 void Formatter::PrintProcessList(const std::vector<ProcessInfo> &processes) {
-	if (m_useJson) {
-		nlohmann::json j = nlohmann::json::array();
-		for (const auto &p : processes) {
-			std::string desc = StringUtils::WstrToString(
-				ProcessUtils::GetProcessDescription(p.Pid).value_or(L"")
-			);
-			nlohmann::json item;
-			item["pid"] = p.Pid;
-			item["name"] = StringUtils::WstrToString(p.Name);
-			item["description"] = desc;
-			item["suspended"] = p.Suspended;
-			j.push_back(item);
-		}
-		std::cout << j.dump(4) << "\n";
-	} else {
+	std::wcout << std::format(
+		L"{:<30} {:>8} {:<9} {:<14} {:>12}  {:<50}\n",
+		L"Image Name",
+		L"PID",
+		L"Session",
+		L"Priority",
+		L"Memory",
+		L"Description"
+	);
+	std::wcout << std::format(
+		L"{:=<30} {:=<8} {:=<9} {:=<14} {:=<12}  {:=<50}\n", L"", L"", L"", L"", L"", L""
+	);
+	for (const auto &p : processes) {
+		std::wstring desc = ProcessUtils::GetProcessDescription(p.Pid).value_or(L"");
+		std::wstring nameStr = p.Name;
+
+		if (nameStr.length() > 30) nameStr = nameStr.substr(0, 27) + L"...";
+		if (desc.length() > 50) desc = desc.substr(0, 47) + L"...";
+
+		std::wstring session = Convert::SessionIdToString(p.SessionId);
+		std::string memory = Convert::MemoryToMB(p.Memory);
+		std::string priority = Convert::ProcessPriorityToString(p.BasePriority);
+
+		std::wstring memStr(memory.begin(), memory.end());
+		std::wstring prioStr(priority.begin(), priority.end());
+
 		std::wcout << std::format(
-			L"{:<30} {:>8} {:<50} {:<9}\n",
-			L"Image Name",
-			L"PID",
-			L"Description",
-			L"Suspended"
+			L"{:<30} {:>8} {:<9} {:<14} {:>12}  {:<50}\n",
+			nameStr,
+			p.Pid,
+			session,
+			prioStr,
+			memStr,
+			desc
 		);
-		std::wcout << std::format(L"{:=<30} {:=<8} {:=<50} {:=<9}\n", L"", L"", L"", L"");
-		for (const auto &p : processes) {
-			std::wstring desc = ProcessUtils::GetProcessDescription(p.Pid).value_or(L"");
-			std::wstring nameStr = p.Name;
-
-			if (nameStr.length() > 30) nameStr = nameStr.substr(0, 27) + L"...";
-			if (desc.length() > 50) desc = desc.substr(0, 47) + L"...";
-
-			std::wcout << std::format(
-				L"{:<30} {:>8} {:<50} {:<9}\n",
-				nameStr,
-				p.Pid,
-				desc,
-				p.Suspended ? L"True" : L"False"
-			);
-		}
 	}
 }
 
 void Formatter::PrintProcessDetails(const std::vector<ProcessInfo> &processes) {
-	if (m_useJson) {
-		nlohmann::json j = nlohmann::json::array();
-		for (const auto &p : processes) {
-			std::string desc = StringUtils::WstrToString(
-				ProcessUtils::GetProcessDescription(p.Pid).value_or(L"")
-			);
-			std::string exePath =
-				StringUtils::WstrToString(NtUtils::GetProcessPath(p.Pid).value_or(L""));
-			auto prioRes = ProcessUtils::GetProcessPriority(p.Pid);
+	std::map<
+		std::tuple<std::wstring, std::wstring, std::wstring>,
+		std::vector<const ProcessInfo *>>
+		groupedProcesses;
 
-			nlohmann::json item;
-			item["pid"] = p.Pid;
-			item["name"] = StringUtils::WstrToString(p.Name);
-			item["description"] = desc;
-			item["suspended"] = p.Suspended;
-			if (prioRes.has_value()) {
-				item["priority_class"] = prioRes.value();
-				item["priority"] =
-					StringUtils::WstrToString(PriorityClassToWString(prioRes.value()));
-			}
-			item["executable"] = exePath;
-			j.push_back(item);
+	for (const auto &p : processes) {
+		std::wstring exePath = NtUtils::GetProcessPath(p.Pid).value_or(L"");
+		std::wstring desc =
+			ProcessUtils::GetFileDescriptionFromPath(exePath).value_or(L"");
+
+		groupedProcesses[std::make_tuple(p.Name, desc, exePath)].emplace_back(&p);
+	}
+
+	bool first = true;
+	for (const auto &[key, procs] : groupedProcesses) {
+		if (!first) std::wcout << L"\n";
+		first = false;
+
+		const auto &[name, desc, exePath] = key;
+
+		std::wcout << std::format(L"PROCESS_NAME: {}\n", name);
+		std::wcout << std::format(L"DESCRIPTION : {}\n", desc);
+		std::wcout << std::format(L"EXECUTABLE  : {}\n", exePath);
+		std::wcout << L"INSTANCES   :\n";
+
+		// Calculate dynamic widths for all columns
+		size_t pidWidth = 3;      // "PID"
+		size_t ppidWidth = 4;     // "PPID"
+		size_t sessionWidth = 7;  // "Session"
+		size_t priorityWidth = 8; // "Priority"
+		size_t memWidth = 6;      // "Memory"
+
+		struct InstanceData {
+			std::wstring pidStr;
+			std::wstring ppidStr;
+			std::wstring session;
+			std::wstring prioStr;
+			std::wstring memStr;
+		};
+
+		std::vector<InstanceData> instances;
+		for (const auto &p : procs) {
+			std::wstring pidStr = std::to_wstring(p->Pid);
+			std::wstring ppidStr = std::to_wstring(p->ParentPid);
+			std::wstring session = Convert::SessionIdToString(p->SessionId);
+			std::string memory = Convert::MemoryToMB(p->Memory);
+			std::string priority = Convert::ProcessPriorityToString(p->BasePriority);
+
+			std::wstring memStr(memory.begin(), memory.end());
+			std::wstring prioStr(priority.begin(), priority.end());
+
+			pidWidth = (std::max)(pidWidth, pidStr.length());
+			ppidWidth = (std::max)(ppidWidth, ppidStr.length());
+			sessionWidth = (std::max)(sessionWidth, session.length());
+			priorityWidth = (std::max)(priorityWidth, prioStr.length());
+			memWidth = (std::max)(memWidth, memStr.length());
+
+			instances.push_back({pidStr, ppidStr, session, prioStr, memStr});
 		}
-		std::cout << j.dump(4) << "\n";
-	} else {
-		std::map<
-			std::tuple<std::wstring, std::wstring, std::wstring>,
-			std::vector<std::tuple<DWORD, bool, std::wstring>>>
-			groupedProcesses;
 
-		for (const auto &p : processes) {
-			std::wstring desc = ProcessUtils::GetProcessDescription(p.Pid).value_or(L"");
-			std::wstring exePath = NtUtils::GetProcessPath(p.Pid).value_or(L"");
-			auto prioRes = ProcessUtils::GetProcessPriority(p.Pid);
-			std::wstring priorityStr = prioRes.has_value()
-										   ? PriorityClassToWString(prioRes.value())
-										   : L"Unknown";
+		// Header (Right-align header for right-aligned data: PID, PPID, Memory)
+		std::wcout << L"    "
+				   << std::format(
+						  L"{:>{}}  {:>{}}  {:<{}}  {:<{}}  {:>{}}\n",
+						  L"PID",
+						  pidWidth,
+						  L"PPID",
+						  ppidWidth,
+						  L"Session",
+						  sessionWidth,
+						  L"Priority",
+						  priorityWidth,
+						  L"Memory",
+						  memWidth
+					  );
 
-			groupedProcesses[std::make_tuple(p.Name, desc, exePath)].emplace_back(
-				p.Pid, p.Suspended, priorityStr
+		// Separator
+		std::wcout << L"    "
+				   << std::format(
+						  L"{:-<{}}  {:-<{}}  {:-<{}}  {:-<{}}  {:-<{}}\n",
+						  L"",
+						  pidWidth,
+						  L"",
+						  ppidWidth,
+						  L"",
+						  sessionWidth,
+						  L"",
+						  priorityWidth,
+						  L"",
+						  memWidth
+					  );
+
+		for (const auto &inst : instances) {
+			std::wcout << std::format(
+				L"    {:>{}}  {:>{}}  {:<{}}  {:<{}}  {:>{}}\n",
+				inst.pidStr,
+				pidWidth,
+				inst.ppidStr,
+				ppidWidth,
+				inst.session,
+				sessionWidth,
+				inst.prioStr,
+				priorityWidth,
+				inst.memStr,
+				memWidth
 			);
-		}
-
-		bool first = true;
-		for (const auto &[key, instances] : groupedProcesses) {
-			if (!first) std::wcout << L"\n";
-			first = false;
-
-			const auto &[name, desc, exePath] = key;
-
-			std::wcout << std::format(L"PROCESS_NAME: {}\n", name);
-			std::wcout << std::format(L"        DESCRIPTION        : {}\n", desc);
-			std::wcout << std::format(L"        EXECUTABLE         : {}\n", exePath);
-			std::wcout << L"        INSTANCES          :\n";
-
-			for (const auto &[pid, suspended, priorityStr] : instances) {
-				std::wcout << std::format(
-					L"            PID: {:<8} | Priority: {:<14} | Suspended: {}\n",
-					pid,
-					priorityStr,
-					suspended ? L"True" : L"False"
-				);
-			}
 		}
 	}
 }
+
+struct ThreadRow {
+	std::string tid, priority, state, reason, name, address;
+};
+
+static void PrintTable(std::ostream &os, const std::vector<ThreadRow> &rows);
+
+void Formatter::PrintThreads(
+	DWORD pid, std::wstring_view processName, const std::vector<ThreadAddrInfo> &threads
+) {
+	std::vector<ThreadRow> rows;
+	for (const auto &t : threads) {
+		std::string tid = std::to_string(t.info.Tid);
+		std::string priority = Convert::ThreadPriorityToString(t.info.BasePriority);
+		std::string state = Convert::ThreadStateToString(t.info.ThreadState);
+		// State 5 is "Waiting" according to Convert.cpp
+		std::string reason = (t.info.ThreadState == 5)
+								 ? Convert::WaitReasonToString(t.info.WaitReason)
+								 : "";
+		std::string name = t.Name;
+		std::string startAddr = t.StartAddress;
+
+		rows.push_back({tid, priority, state, reason, name, startAddr});
+	}
+
+	std::cout << std::format(
+		"--- Threads for {} (PID: {}) ---\n", StringUtils::WstrToString(processName), pid
+	);
+
+	PrintTable(std::cout, rows);
+}
+
+static void PrintTable(std::ostream &os, const std::vector<ThreadRow> &rows) {
+	size_t tidW = 3, priW = 8, staW = 5, reaW = 6, namW = 4, adrW = 12;
+	bool showName = false, showAddr = false;
+
+	for (const auto &r : rows) {
+		tidW = (std::max)(tidW, r.tid.length());
+		priW = (std::max)(priW, r.priority.length());
+		staW = (std::max)(staW, r.state.length());
+		reaW = (std::max)(reaW, r.reason.length());
+		if (!r.name.empty()) {
+			showName = true;
+			namW = (std::max)(namW, r.name.length());
+		}
+		if (!r.address.empty()) {
+			showAddr = true;
+			adrW = (std::max)(adrW, r.address.length());
+		}
+	}
+
+	// Header
+	os << std::format(
+		"{:<{}} | {:<{}} | {:<{}} | {:<{}}",
+		"TID",
+		tidW,
+		"Priority",
+		priW,
+		"State",
+		staW,
+		"Reason",
+		reaW
+	);
+	if (showName) os << std::format(" | {:<{}}", "Name", namW);
+	if (showAddr) os << std::format(" | {:<{}}", "StartAddress", adrW);
+	os << "\n";
+
+	// Separator
+	os << std::format(
+		"{:-<{}}+{:-<{}}+{:-<{}}+{:-<{}}",
+		"",
+		tidW + 1,
+		"",
+		priW + 2,
+		"",
+		staW + 2,
+		"",
+		reaW + 2
+	);
+	if (showName) os << std::format("+{:-<{}}", "", namW + 2);
+	if (showAddr) os << std::format("+{:-<{}}", "", adrW + 2);
+	os << "\n";
+
+	// Rows
+	for (const auto &r : rows) {
+		os << std::format(
+			"{:<{}} | {:<{}} | {:<{}} | {:<{}}",
+			r.tid,
+			tidW,
+			r.priority,
+			priW,
+			r.state,
+			staW,
+			r.reason,
+			reaW
+		);
+		if (showName) os << std::format(" | {:<{}}", r.name, namW);
+		if (showAddr) os << std::format(" | {:<{}}", r.address, adrW);
+		os << "\n";
+	}
+	os << "\n";
+}
+
+namespace {
+	template <typename T> static ThreadRow MakeThreadRow(const T &t) {
+		ThreadRow r = {
+			std::to_string(t.info.Tid),
+			Convert::ThreadPriorityToString(t.info.BasePriority),
+			Convert::ThreadStateToString(t.info.ThreadState),
+			(t.info.ThreadState == 5) ? Convert::WaitReasonToString(t.info.WaitReason)
+									  : "",
+			t.Name,
+			"" /*StartAddress*/
+		};
+		if constexpr (std::is_same_v<T, ThreadAddrInfo>) {
+			r.address = t.StartAddress;
+		}
+		return r;
+	}
+
+	static std::string GetGroupKey(const std::string &err) {
+		static const std::regex idRegex(R"( for (TID|PID) \d+)");
+		return std::regex_replace(err, idRegex, "");
+	}
+
+	template <typename T>
+	static void PrintFailures(
+		const std::vector<std::pair<const T *, std::string>> &failures,
+		std::string_view verb,
+		std::string_view processName,
+		DWORD pid
+	) {
+		if (failures.empty()) return;
+
+		std::map<std::string, std::vector<std::pair<const T *, std::string>>> groups;
+		std::vector<std::string> groupKeys;
+		for (const auto &fail : failures) {
+			std::string key = GetGroupKey(fail.second);
+			if (groups.find(key) == groups.end()) {
+				groupKeys.push_back(key);
+			}
+			groups[key].push_back(fail);
+		}
+
+		if (groups.size() == 1) {
+			std::cerr << std::format(
+				"[FAILED] Could not {} {} threads in {} (PID: {}):\n\n",
+				verb,
+				failures.size(),
+				processName,
+				pid
+			);
+			std::cerr
+				<< std::format("Error: {}\n\n", GetGroupKey(failures.front().second));
+			std::vector<ThreadRow> rows;
+			for (const auto &[t, err] : failures) {
+				rows.push_back(MakeThreadRow(*t));
+			}
+			PrintTable(std::cerr, rows);
+
+		} else {
+			std::cerr << std::format(
+				"[FAILED] Could not {} threads in {} (PID: {})\n\n", verb, processName, pid
+			);
+
+			int groupIdx = 1;
+			for (const auto &key : groupKeys) {
+				const auto &groupFailures = groups[key];
+				std::cerr << std::format(
+					"Error Group {} ({} threads)\n", groupIdx++, groupFailures.size()
+				);
+				std::cerr << "──────────────────────────────────────────────\n";
+				std::cerr << std::format("Error: {}\n\n", key);
+
+				std::vector<ThreadRow> rows;
+				for (const auto &[t, err] : groupFailures) {
+					rows.push_back(MakeThreadRow(*t));
+				}
+				PrintTable(std::cerr, rows);
+			}
+		}
+	}
+} // namespace
 
 void Formatter::PrintCommandResult(
 	const std::pair<ProcessInfo, ResultVoid> &result, Action action
 ) {
 	static const std::map<Action, std::pair<std::string, std::string>> actionMap = {
-		{Action::Terminate, {"terminated", "terminate"}},
-		{Action::Suspend, {"suspended", "suspend"}},
-		{Action::Resume, {"resumed", "resume"}},
+		{Action::Terminate, {"Terminated", "terminate"}},
+		{Action::Suspend, {"Suspended", "suspend"}},
+		{Action::Resume, {"Resumed", "resume"}},
+		{Action::SetPriority, {"Set priority for", "set priority of"}},
 	};
 
 	const auto &[pastVerb, verb] = actionMap.at(action);
 	const auto &[proc, res] = result;
-	bool success = res.has_value();
 
-	if (m_useJson) {
-		nlohmann::json item;
-		item["success"] = success;
-		item["pid"] = proc.Pid;
-		item["name"] = StringUtils::WstrToString(proc.Name);
-		if (!success) {
-			item["error"] = res.error().message;
-			if (!res.error().traceback.empty()) {
-				item["traceback"] = res.error().traceback;
-			}
-		}
-		std::cout << item.dump(4) << "\n";
+	if (res.has_value()) {
+		std::cout << std::format(
+			"SUCCESS: {} process \"{}\" with PID {}",
+			pastVerb,
+			StringUtils::WstrToString(proc.Name),
+			proc.Pid
+		);
 	} else {
-		if (success) {
-			std::cout << std::format(
-				"SUCCESS: The process \"{}\" with PID {} has been {}.\n",
-				StringUtils::WstrToString(proc.Name),
-				proc.Pid,
-				pastVerb
-			);
-		} else {
-			std::cerr << res.error().str() << "\n";
-		}
+		std::cerr << std::format(
+			"ERROR: Failed to {} process \"{}\" with PID {}"
+			"\nCause: {}",
+			verb,
+			StringUtils::WstrToString(proc.Name),
+			proc.Pid,
+			res.error().message
+		);
 	}
 }
 
-void Formatter::PrintThreadAction(
-	DWORD pid,
-	std::wstring_view processName,
-	Action action,
-	const std::vector<std::pair<ThreadAddrInfo, ResultVoid>> &results
-) {
-	static const std::map<Action, std::pair<std::string, std::string>> actionMap = {
-		{Action::Suspend, {"Suspended", "suspend"}},
-		{Action::Resume, {"Resumed", "resume"}},
-	};
-
-	const auto &[pastVerb, verb] = actionMap.at(action);
-
-	if (m_useJson) {
-		nlohmann::json jOutputs = nlohmann::json::array();
-
-		for (const auto &[t, res] : results) {
-			nlohmann::json item;
-			item["success"] = res.has_value();
-			item["pid"] = pid;
-			item["name"] = StringUtils::WstrToString(processName);
-			item["tid"] = t.Tid;
-			item["start_address"] = t.StartAddress;
-			auto prioRes = ProcessUtils::GetThreadPriorityLevel(t.Tid);
-			if (prioRes.has_value()) {
-				item["priority_level"] = prioRes.value();
-				item["priority"] = ThreadPriorityToString(prioRes.value());
-			}
-			item["action"] = pastVerb;
-			if (!res.has_value()) {
-				item["error"] = res.error().message;
-			}
-			jOutputs.push_back(item);
-		}
-
-		std::cout << jOutputs.dump(4) << "\n";
-	} else {
-		if (results.empty()) {
-			return; // Nothing to print
-		}
-
-		if (results.size() == 1) {
-			const auto &[t, res] = results.front();
-			if (res.has_value()) {
-				std::cout << std::format(
-					"SUCCESS: {} thread {} of PID {} with StartAddress {}\n",
-					pastVerb,
-					t.Tid,
-					pid,
-					t.StartAddress
-				);
-			} else {
-				std::cerr << std::format(
-					"ERROR: Failed to {} thread {} of PID {}: {}\n",
-					verb,
-					t.Tid,
-					pid,
-					res.error().message
-				);
-			}
-		} else {
-			// Partition into successes and failures for grouped display
-			std::vector<const ThreadAddrInfo *> successes;
-			std::vector<std::pair<const ThreadAddrInfo *, std::string>> failures;
-
-			for (const auto &[t, res] : results) {
-				if (res.has_value()) {
-					successes.push_back(&t);
-				} else {
-					failures.push_back({&t, res.error().message});
-				}
-			}
-
-			if (!successes.empty()) {
-				std::cout << std::format(
-					"[SUCCESS] {} {} threads in {} (PID: {}):\n",
-					pastVerb,
-					successes.size(),
-					StringUtils::WstrToString(processName),
-					pid
-				);
-
-				for (const auto *t : successes) {
-					auto prioRes = ProcessUtils::GetThreadPriorityLevel(t->Tid);
-					std::string prioStr = prioRes.has_value()
-											  ? ThreadPriorityToString(prioRes.value())
-											  : "Unknown";
-					std::cout << std::format(
-						"  TID: {:<4} | Priority: {:<15} | StartAddress: {}\n",
-						t->Tid,
-						prioStr,
-						t->StartAddress
-					);
-				}
-				std::cout << "\n";
-			}
-
-			if (!failures.empty()) {
-				std::cerr << std::format(
-					"[FAILED] Could not {} {} threads in {} (PID: {}):\n",
-					verb,
-					failures.size(),
-					StringUtils::WstrToString(processName),
-					pid
-				);
-
-				for (const auto &[t, err] : failures) {
-					auto prioRes = ProcessUtils::GetThreadPriorityLevel(t->Tid);
-					std::string prioStr = prioRes.has_value()
-											  ? ThreadPriorityToString(prioRes.value())
-											  : "Unknown";
-					std::cerr << std::format(
-						"  TID: {:<4} | Priority: {:<15} | StartAddress: {:<40} | Error: "
-						"{}\n",
-						t->Tid,
-						prioStr,
-						t->StartAddress,
-						err
-					);
-				}
-				std::cerr << "\n";
-			}
-		}
-	}
-}
-
-void Formatter::PrintThreadAction(
+void Formatter::PrintThreadsResult(
 	DWORD pid,
 	std::wstring_view procName,
 	Action action,
@@ -369,189 +406,121 @@ void Formatter::PrintThreadAction(
 	static const std::map<Action, std::pair<std::string, std::string>> actionMap = {
 		{Action::Suspend, {"Suspended", "suspend"}},
 		{Action::Resume, {"Resumed", "resume"}},
+		{Action::SetPriority, {"Set priority for", "set priority for"}},
 	};
+
+	if (results.empty()) return; // Nothing to print
+
+	// Re-query fresh thread info to get updated priority/state/reason
+	auto updatedResults = results;
+	auto freshThreads = NtUtils::GetProcessThreads(pid);
+	if (freshThreads.has_value()) {
+		std::map<DWORD, ThreadInfo> freshMap;
+		for (const auto &ti : freshThreads.value()) {
+			freshMap[ti.Tid] = ti;
+		}
+		for (auto &[t, res] : updatedResults) {
+			auto it = freshMap.find(t.info.Tid);
+			if (it != freshMap.end()) t.info = it->second;
+		}
+	}
 
 	const auto &[pastVerb, verb] = actionMap.at(action);
 	std::string processName = StringUtils::WstrToString(procName);
 
-	if (m_useJson) {
-		nlohmann::json jOutputs = nlohmann::json::array();
+	// Partition into successes and failures for grouped display
+	std::vector<const ThreadNameInfo *> successes;
+	std::vector<std::pair<const ThreadNameInfo *, std::string>> failures;
 
-		for (const auto &[t, res] : results) {
-			nlohmann::json item;
-			item["success"] = res.has_value();
-			item["pid"] = pid;
-			item["name"] = processName;
-			item["tid"] = t.Tid;
-			item["thread_name"] = t.Name;
-			auto prioRes = ProcessUtils::GetThreadPriorityLevel(t.Tid);
-			if (prioRes.has_value()) {
-				item["priority_level"] = prioRes.value();
-				item["priority"] = ThreadPriorityToString(prioRes.value());
-			}
-			item["action"] = pastVerb;
-			if (!res.has_value()) {
-				item["error"] = res.error().message;
-			}
-			jOutputs.push_back(item);
-		}
-
-		std::cout << jOutputs.dump(4) << "\n";
-	} else {
-		if (results.empty()) {
-			return; // Nothing to print
-		}
-
-		if (results.size() == 1) {
-			const auto &[t, res] = results.front();
-			if (res.has_value()) {
-				std::cout << std::format(
-					"SUCCESS: {} thread {} named \"{}\" of process \"{}\" with PID {}\n",
-					pastVerb,
-					t.Tid,
-					t.Name,
-					processName,
-					pid
-				);
-			} else {
-				std::cerr << std::format(
-					"ERROR: Failed to {} thread {} named \"{}\" of process \"{}\" with "
-					"PID {}"
-					"\nReason: {}\n",
-					verb,
-					t.Tid,
-					t.Name,
-					processName,
-					pid,
-					res.error().message
-				);
-			}
+	for (const auto &[t, res] : updatedResults) {
+		if (res.has_value()) {
+			successes.push_back(&t);
 		} else {
-			// Partition into successes and failures for grouped display
-			std::vector<const ThreadNameInfo *> successes;
-			std::vector<std::pair<const ThreadNameInfo *, std::string>> failures;
-
-			for (const auto &[t, res] : results) {
-				if (res.has_value()) {
-					successes.push_back(&t);
-				} else {
-					failures.push_back({&t, res.error().message});
-				}
-			}
-
-			if (!successes.empty()) {
-				std::cout << std::format(
-					"[SUCCESS] {} {} threads in {} (PID: {}):\n",
-					pastVerb,
-					successes.size(),
-					processName,
-					pid
-				);
-
-				for (const auto *t : successes) {
-					auto prioRes = ProcessUtils::GetThreadPriorityLevel(t->Tid);
-					std::string prioStr = prioRes.has_value()
-											  ? ThreadPriorityToString(prioRes.value())
-											  : "Unknown";
-					std::cout << std::format(
-						"  TID: {:<4} | Priority: {:<15} | Name: {}\n",
-						t->Tid,
-						prioStr,
-						t->Name
-					);
-				}
-				std::cout << "\n";
-			}
-
-			if (!failures.empty()) {
-				std::cerr << std::format(
-					"[FAILED] Could not {} {} threads in {} (PID: {}):\n",
-					verb,
-					failures.size(),
-					processName,
-					pid
-				);
-
-				for (const auto &[t, err] : failures) {
-					auto prioRes = ProcessUtils::GetThreadPriorityLevel(t->Tid);
-					std::string prioStr = prioRes.has_value()
-											  ? ThreadPriorityToString(prioRes.value())
-											  : "Unknown";
-					std::cerr << std::format(
-						"  TID: {:<4} | Priority: {:<15} | Name: {:<40} | Error: {}\n",
-						t->Tid,
-						prioStr,
-						t->Name,
-						err
-					);
-				}
-				std::cerr << "\n";
-			}
+			failures.push_back({&t, res.error().message});
 		}
 	}
-}
 
-void Formatter::PrintThreads(
-	DWORD pid, std::wstring_view processName, const std::vector<ThreadAddrInfo> &threads
-) {
-	if (m_useJson) {
-		nlohmann::json jArr = nlohmann::json::array();
-		for (const auto &t : threads) {
-			auto prioRes = ProcessUtils::GetThreadPriorityLevel(t.Tid);
-			nlohmann::json threadObj = {{"TID", t.Tid}};
-			if (prioRes.has_value()) {
-				threadObj["PriorityLevel"] = prioRes.value();
-				threadObj["Priority"] = ThreadPriorityToString(prioRes.value());
-			}
-			if (!t.Name.empty()) {
-				threadObj["Name"] = t.Name;
-			}
-			threadObj["StartAddress"] = t.StartAddress;
-			jArr.push_back(threadObj);
-		}
-		std::cout << jArr.dump(4) << "\n";
-	} else {
-		size_t maxNameLen = 4; // Width of "Name" header
-		for (const auto &t : threads) {
-			size_t len = t.Name.empty() ? 1 : t.Name.length();
-			if (len > maxNameLen) {
-				maxNameLen = len;
-			}
-		}
-
+	if (!successes.empty()) {
 		std::cout << std::format(
-			"--- Threads for {} (PID: {}) ---\n",
-			StringUtils::WstrToString(processName),
+			"[SUCCESS] {} {} threads in {} (PID: {}):\n",
+			pastVerb,
+			successes.size(),
+			processName,
 			pid
 		);
 
-		std::string paddedHeaderName = "Name";
-		paddedHeaderName.append(maxNameLen - 4, ' ');
-
-		std::cout << std::format(
-			"{:<6} | {:<15} | {} | {}\n",
-			"TID",
-			"Priority",
-			paddedHeaderName,
-			"StartAddress"
-		);
-		std::cout << std::string(27 + maxNameLen + 20, '-') << "\n";
-
-		for (const auto &t : threads) {
-			auto prioRes = ProcessUtils::GetThreadPriorityLevel(t.Tid);
-			std::string prioStr =
-				prioRes.has_value() ? ThreadPriorityToString(prioRes.value()) : "Unknown";
-
-			std::string nameStr = t.Name.empty() ? "-" : t.Name;
-			std::string paddedName = nameStr;
-			if (paddedName.length() < maxNameLen) {
-				paddedName.append(maxNameLen - paddedName.length(), ' ');
-			}
-
-			std::cout << std::format(
-				"{:<6}  {:<15}   {}   {}\n", t.Tid, prioStr, paddedName, t.StartAddress
-			);
+		std::vector<ThreadRow> rows;
+		for (const auto *t : successes) {
+			rows.push_back(MakeThreadRow(*t));
 		}
-		std::cout << "\n";
+		PrintTable(std::cout, rows);
+	}
+
+	if (!failures.empty()) {
+		PrintFailures(failures, verb, processName, pid);
+	}
+}
+
+void Formatter::PrintThreadsResult(
+	DWORD pid,
+	std::wstring_view procName,
+	Action action,
+	const std::vector<std::pair<ThreadAddrInfo, ResultVoid>> &results
+) {
+	static const std::map<Action, std::pair<std::string, std::string>> actionMap = {
+		{Action::Suspend, {"Suspended", "suspend"}},
+		{Action::Resume, {"Resumed", "resume"}},
+		{Action::SetPriority, {"Set priority for", "set priority for"}},
+	};
+
+	if (results.empty()) return; // Nothing to print
+
+	// Re-query fresh thread info to get updated priority/state/reason
+	auto updatedResults = results;
+	auto freshThreads = NtUtils::GetProcessThreads(pid);
+	if (freshThreads.has_value()) {
+		std::map<DWORD, ThreadInfo> freshMap;
+		for (const auto &ti : freshThreads.value()) {
+			freshMap[ti.Tid] = ti;
+		}
+		for (auto &[t, res] : updatedResults) {
+			auto it = freshMap.find(t.info.Tid);
+			if (it != freshMap.end()) t.info = it->second;
+		}
+	}
+
+	const auto &[pastVerb, verb] = actionMap.at(action);
+	std::string processName = StringUtils::WstrToString(procName);
+
+	// Partition into successes and failures for grouped display
+	std::vector<const ThreadAddrInfo *> successes;
+	std::vector<std::pair<const ThreadAddrInfo *, std::string>> failures;
+
+	for (const auto &[t, res] : updatedResults) {
+		if (res.has_value()) {
+			successes.push_back(&t);
+		} else {
+			failures.push_back({&t, res.error().message});
+		}
+	}
+
+	if (!successes.empty()) {
+		std::cout << std::format(
+			"[SUCCESS] {} {} threads in {} (PID: {}):\n",
+			pastVerb,
+			successes.size(),
+			processName,
+			pid
+		);
+
+		std::vector<ThreadRow> rows;
+		for (const auto *t : successes) {
+			rows.push_back(MakeThreadRow(*t));
+		}
+		PrintTable(std::cout, rows);
+	}
+
+	if (!failures.empty()) {
+		PrintFailures(failures, verb, processName, pid);
 	}
 }

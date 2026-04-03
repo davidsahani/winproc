@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 
 namespace StringUtils {
@@ -12,4 +13,14 @@ namespace StringUtils {
 	 * @brief Converts a std::string to lowercase.
 	 */
 	std::string ToLower(std::string_view str);
+
+	/**
+	 * @brief Lowercases string and replaces whitespace with underscores.
+	 */
+	std::string Normalize(std::string_view str);
+
+	/**
+	 * @brief Tries to parse std::string to long.
+	 */
+	std::optional<long> TryParseInt(std::string_view str);
 } // namespace StringUtils

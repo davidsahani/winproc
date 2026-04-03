@@ -11,34 +11,40 @@ struct ThreadInfo {
 	DWORD Tid;
 	PVOID NativeStartAddress;
 	PVOID Win32StartAddress;
+	LONG BasePriority;
+	ULONG ThreadState;
+	ULONG WaitReason;
 };
 
 struct ProcessInfo {
-	DWORD Pid;
 	std::wstring Name;
-	bool Suspended;
+	DWORD Pid;
+	DWORD ParentPid;
+	ULONG SessionId;
+	LONG BasePriority;
+	SIZE_T Memory;
 };
 
 class NtUtils {
 public:
 	/**
-     * @brief Check if the specified process is suspended.
-     */
+	 * @brief Check if the specified process is suspended.
+	 */
 	static Result<bool, Error> IsProcessSuspended(DWORD pid);
 
 	/**
-     * @brief Suspend the specified process.
-     */
+	 * @brief Suspend the specified process.
+	 */
 	static Result<std::monostate, Error> SuspendProcess(DWORD pid);
 
 	/**
-     * @brief Resume the specified process.
-     */
+	 * @brief Resume the specified process.
+	 */
 	static Result<std::monostate, Error> ResumeProcess(DWORD pid);
 
 	/**
-     * @brief Get threads information for the specified process.
-     */
+	 * @brief Get threads information for the specified process.
+	 */
 	static Result<std::vector<ThreadInfo>, Error> GetProcessThreads(DWORD pid);
 
 	/**
@@ -47,14 +53,13 @@ public:
 	static Result<std::vector<ProcessInfo>, Error> GetProcessList();
 
 	/**
-     * @brief Get the image path of the specified process.
-     */
+	 * @brief Get the image path of the specified process.
+	 */
 	static Result<std::wstring, Error> GetProcessPath(DWORD pid);
 
 private:
 	NtUtils();
 	~NtUtils() = default;
-	static NtUtils &Instance();
-
+	static HMODULE GetNtdllModule();
 	HMODULE m_hNtDll; /* Handle to the ntdll.dll module */
 };

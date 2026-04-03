@@ -1,35 +1,47 @@
 #pragma once
 
-#include <string>
-#include "cli/Formatter.hpp"
+#include <string_view>
 
 namespace CommandHandlers {
-
-	int HandleList(Formatter &formatter);
-	int HandleKill(const std::string &target, Formatter &formatter);
-	int HandleSuspend(const std::string &target, Formatter &formatter);
-	int HandleResume(const std::string &target, Formatter &formatter);
+	int HandleList();
+	int HandleKill(std::string_view target);
+	int HandleQuery(std::string_view target);
+	int HandleQueryThread(
+		std::string_view target, std::string_view threadIdOrName, bool queryAll
+	);
+	int HandleSuspend(std::string_view target);
+	int HandleResume(std::string_view target);
 	int HandleSuspendThread(
-		const std::string &target, const std::string &threadIdOrName, Formatter &formatter
+		std::string_view target,
+		std::string_view threadIdOrName,
+		std::string_view filterPriority
 	);
 	int HandleResumeThread(
-		const std::string &target, const std::string &threadIdOrName, Formatter &formatter
+		std::string_view target,
+		std::string_view threadIdOrName,
+		std::string_view filterPriority
 	);
 	int HandleSuspendThreadByAddr(
-		const std::string &target,
-		const std::string &threadAddrRegex,
-		Formatter &formatter
+		std::string_view target,
+		std::string_view threadAddrRegex,
+		std::string_view filterPriority
 	);
 	int HandleResumeThreadByAddr(
-		const std::string &target,
-		const std::string &threadAddrRegex,
-		Formatter &formatter
+		std::string_view target,
+		std::string_view threadAddrRegex,
+		std::string_view filterPriority
 	);
-	int HandleQuery(const std::string &target, Formatter &formatter);
-	int HandleQueryThread(
-		const std::string &target,
-		const std::string &threadIdOrName,
-		bool queryAll,
-		Formatter &formatter
+	int HandleSetPriority(std::string_view target, std::string_view value);
+	int HandleSetPriorityThread(
+		std::string_view target,
+		std::string_view priority,
+		std::string_view threadIdOrName,
+		std::string_view filterPriority
+	);
+	int HandleSetPriorityThreadByAddr(
+		std::string_view target,
+		std::string_view priority,
+		std::string_view threadAddrRegex,
+		std::string_view filterPriority
 	);
 } // namespace CommandHandlers
