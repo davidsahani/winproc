@@ -2,8 +2,8 @@
 
 // IDI_APP_ICON ICON "icons/app.ico"
 
-#define VERSION_AS_NUMBER 0,1,0
-#define VERSION_AS_STRING "0.1.0"
+#define VERSION_AS_NUMBER 0,2,0
+#define VERSION_AS_STRING "0.2.0"
 
 // Version Info
 VS_VERSION_INFO VERSIONINFO
@@ -24,12 +24,12 @@ BEGIN
         BLOCK "040904b0" // U.S. English, Unicode
         BEGIN
             VALUE "CompanyName",      "davidsahani@github.com" "\0"
-            VALUE "FileDescription",  "WinProc" "\0"
+            VALUE "FileDescription",  "Windows Process Utility" "\0"
             VALUE "FileVersion",      VERSION_AS_STRING "\0"
-            VALUE "InternalName",     "WinProc" "\0"
+            VALUE "InternalName",     "winproc" "\0"
             VALUE "LegalCopyright",   "Copyright (C) 2026 davidsahani@github.com. All rights reserved." "\0"
             VALUE "OriginalFilename", "winproc.exe" "\0"
-            VALUE "ProductName",      "WinProc" "\0"
+            VALUE "ProductName",      "winproc" "\0"
             VALUE "ProductVersion",   VERSION_AS_STRING "\0"
         END
     END

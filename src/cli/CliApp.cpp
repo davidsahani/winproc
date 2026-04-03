@@ -8,7 +8,7 @@
 
 int CliApp::Run(int argc, char *argv[]) {
 	argparse::ArgumentParser parser("winproc");
-	constexpr const char version[] = "1.0";
+	constexpr const char version[] = "0.2.0";
 
 	// --- list ---
 	argparse::ArgumentParser listCmd("list", version, argparse::default_arguments::help);
