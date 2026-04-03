@@ -9,45 +9,57 @@ Explore the functionality of `winproc` through these common operations:
 #### 📋 List Processes
 > Retrieve a comprehensive list of all currently running processes.
 ```bash
-winproc -list
-```
-> **JSON Output**: Append `--json` to format the output for automated parsing.
-```bash
-winproc -list --json
+winproc list
 ```
 
 #### 💀 Terminate a Process
 > Forcefully terminate a process using either its executable name or Process ID (PID).
 ```bash
-winproc -kill notepad.exe
+winproc kill notepad.exe
 ```
 
 #### ⏸️ Suspend / ▶️ Resume
 > Pause or resume the execution of an entire process by its PID or name.
 ```bash
-winproc -suspend 1234
-winproc -resume notepad.exe
+winproc suspend 1234
+winproc resume notepad.exe
 ```
 
 #### 🔍 Query Information
 > Gather detailed information about a specific process, including thread start addresses.
 ```bash
-winproc -query explorer.exe
-winproc -query 1234 -threads
-winproc -query 1234 -thread "MainThread"
+winproc query explorer.exe
+winproc query 1234 -threads              # List all threads
+winproc query 1234 -thread "MainThread"  # Query specific thread
 ```
 
 #### 🧵 Thread-Level Control
 > Target individual threads within a process to suspend, resume, or query them independently. You can target them by ID, Name, or Start Address Regex.
 ```bash
 # Target by Thread ID
-winproc -suspend 1234 -thread 5678
+winproc suspend 1234 -thread 5678
 
 # Target by Thread Name
-winproc -suspend 1234 -thread "WorkerThread"
+winproc suspend 1234 -thread "WorkerThread"
 
 # Target by Start Address Regex
-winproc -resume 1234 -thread_addrs .*
+winproc resume 1234 -thread_addr .*
+
+# Filter by priority before suspending/resuming
+winproc suspend 1234 -thread "WorkerThread" -withpriority normal
+```
+
+#### ⚡ Set Priority
+> Set the priority class for a process or the priority level for specific threads.
+```bash
+# Set process priority (normal, high, realtime, idle, etc.)
+winproc setpriority notepad.exe high
+
+# Set thread priority (idle, lowest, below_normal, normal, above_normal, highest)
+winproc setpriority notepad.exe above_normal -thread 5678
+
+# Set priority for threads by start address regex
+winproc setpriority 1234 normal -thread_addr "my_worker_.*"
 ```
 
 ---
